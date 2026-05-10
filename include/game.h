@@ -4,18 +4,17 @@
 #include <raylib.h>
 #include "board.h"
 
-
-typedef enum PieceType {
-    B_PAWN, B_KNIGHT, B_BISHOP, B_ROOK, B_QUEEN, B_KING,
-    W_PAWN, W_KNIGHT, W_BISHOP, W_ROOK, W_QUEEN, W_KING,
-    EMPTY,
-    PIECE_COUNT
-} PieceType;
+typedef struct {
+    int active;
+    int square;
+    PieceType type;
+} HeldPiece;
 
 typedef struct {
     Color light_color;
     Color dark_color;
     Texture2D textures[PIECE_COUNT];
+    HeldPiece held_piece;
 } Game;
 
 Game init_game();

@@ -3,24 +3,21 @@
 
 #include <stdint.h>
 
+typedef uint64_t BITBOARD;
+
+typedef enum PieceType {
+    B_PAWN, B_KNIGHT, B_BISHOP, B_ROOK, B_QUEEN, B_KING,
+    W_PAWN, W_KNIGHT, W_BISHOP, W_ROOK, W_QUEEN, W_KING,
+    EMPTY,
+    PIECE_COUNT
+} PieceType;
+
 typedef struct {
-    uint64_t w_pawn;
-    uint64_t w_rook;
-    uint64_t w_knight;
-    uint64_t w_bishop;
-    uint64_t w_queen;
-    uint64_t w_king;
-    uint64_t b_pawn;
-    uint64_t b_rook;
-    uint64_t b_knight;
-    uint64_t b_bishop;
-    uint64_t b_queen;
-    uint64_t b_king;
+    BITBOARD bitboards[PIECE_COUNT];
 } Board;
 
 Board init_board();
 
-void display_board(Board *board, int is_dark_mode);
-
+void move_piece(Board *board, int current_square, int new_square);
 
 #endif
