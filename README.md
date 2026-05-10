@@ -1,2 +1,5 @@
 # chess-engine
-Chess Engine made in python
+Chess Engine made in C (without using AI)
+
+# Requirements
+> raylib
