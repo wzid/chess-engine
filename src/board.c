@@ -64,6 +64,7 @@ static BITBOARD legal_pawn_moves(Board* board, PieceType type, int current_squar
 static BITBOARD legal_knight_moves(Board* board, PieceType type, int current_square);
 static BITBOARD legal_rook_moves(Board* board, PieceType type, int current_square);
 static BITBOARD legal_bishop_moves(Board* board, PieceType type, int current_square);
+static BITBOARD legal_queen_moves(Board* board, PieceType type, int current_square);
 static void add_move(BITBOARD* legal_moves, int rank, int file);
 static void remove_same_color_capture(Board* board, BITBOARD* legal_moves, PieceType type);
 static int is_piece_at(Board* board, int rank, int file);
@@ -83,6 +84,9 @@ static BITBOARD get_legal_moves(Board* board, PieceType type, int current_square
         case B_BISHOP:
         case W_BISHOP:
             return legal_bishop_moves(board, type, current_square);
+        case B_QUEEN:
+        case W_QUEEN:
+            return legal_queen_moves(board, type, current_square);
         default:
             return 0ULL;
     }
@@ -226,6 +230,13 @@ static BITBOARD legal_bishop_moves(Board* board, PieceType type, int current_squ
     return legal_moves;
 }
 
+// coded like this just incase I need to debug the legal moves.
+static BITBOARD legal_queen_moves(Board* board, PieceType type, int current_square) {
+    uint64_t legal_moves = legal_bishop_moves(board, type, current_square) | legal_rook_moves(board, type, current_square);
+    // print_bitboard(legal_moves);
+    return legal_moves;
+}
+
 static void add_move(BITBOARD* legal_moves, int rank, int file) {
     if (rank <= 7 && rank >= 0 && file <= 7 && file >= 0) *legal_moves |= (1ULL << ((rank * 8) + file));
 }
@@ -253,7 +264,6 @@ static int is_piece_at(Board* board, int rank, int file) {
     uint64_t mask = 1ULL << ((rank * 8) + file);
     for (int i = 0; i < PIECE_COUNT - 1; i++) {
         if (mask & board->bitboards[i]) {
-            printf("Piece at %i\n", i);
             return 1;
         }
     }
