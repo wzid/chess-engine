@@ -62,6 +62,8 @@ void move_piece(Board* board, PieceType type, int current_square, int new_square
 
 static BITBOARD legal_pawn_moves(Board* board, PieceType type, int current_square);
 static BITBOARD legal_knight_moves(Board* board, PieceType type, int current_square);
+static BITBOARD legal_rook_moves(Board* board, PieceType type, int current_square);
+static BITBOARD legal_bishop_moves(Board* board, PieceType type, int current_square);
 static void add_move(BITBOARD* legal_moves, int rank, int file);
 static void remove_same_color_capture(Board* board, BITBOARD* legal_moves, PieceType type);
 static int is_piece_at(Board* board, int rank, int file);
@@ -75,6 +77,12 @@ static BITBOARD get_legal_moves(Board* board, PieceType type, int current_square
         case B_KNIGHT:
         case W_KNIGHT:
             return legal_knight_moves(board, type, current_square);
+        case B_ROOK:
+        case W_ROOK:
+            return legal_rook_moves(board, type, current_square);
+        case B_BISHOP:
+        case W_BISHOP:
+            return legal_bishop_moves(board, type, current_square);
         default:
             return 0ULL;
     }
@@ -130,7 +138,6 @@ static BITBOARD legal_pawn_moves(Board* board, PieceType type, int current_squar
 static BITBOARD legal_knight_moves(Board* board, PieceType type, int current_square) {
     int rank = current_square / 8;
     int file = current_square % 8;
-    printf("Rank: %i, File: %i\n", rank, file);
 
     BITBOARD legal_moves = 0ULL;
 
@@ -145,10 +152,76 @@ static BITBOARD legal_knight_moves(Board* board, PieceType type, int current_squ
     add_move(&legal_moves, rank + 2, file - 1);
     add_move(&legal_moves, rank + 2, file + 1);
 
-    print_bitboard(legal_moves);
     remove_same_color_capture(board, &legal_moves, type);
 
-    print_bitboard(legal_moves);
+    return legal_moves;
+}
+
+static BITBOARD legal_rook_moves(Board* board, PieceType type, int current_square) {
+    int rank = current_square / 8;
+    int file = current_square % 8;
+
+    BITBOARD legal_moves = 0ULL;
+
+    // down
+    for (int r = rank + 1; r < 8; r++) {
+        add_move(&legal_moves, r, file);
+        if (is_piece_at(board, r, file)) break;
+    }
+
+    // up
+    for (int r = rank - 1; r >= 0; r--) {
+        add_move(&legal_moves, r, file);
+        if (is_piece_at(board, r, file)) break;
+    }
+
+    // right
+    for (int f = file + 1; f < 8; f++) {
+        add_move(&legal_moves, rank, f);
+        if (is_piece_at(board, rank, f)) break;
+    }
+
+    // left
+    for (int f = file - 1; f >= 0; f--) {
+        add_move(&legal_moves, rank, f);
+        if (is_piece_at(board, rank, f)) break;
+    }
+
+    remove_same_color_capture(board, &legal_moves, type);
+    return legal_moves;
+}
+
+static BITBOARD legal_bishop_moves(Board* board, PieceType type, int current_square) {
+    int rank = current_square / 8;
+    int file = current_square % 8;
+
+    BITBOARD legal_moves = 0ULL;
+
+    // bottom right 
+    for (int r = rank + 1, f = file + 1; r < 8 && f < 8; r++, f++) {
+        add_move(&legal_moves, r, f);
+        if (is_piece_at(board, r, f)) break;
+    }
+
+    // bottom left 
+    for (int r = rank + 1, f = file - 1; r < 8 && f >= 0; r++, f--) {
+        add_move(&legal_moves, r, f);
+        if (is_piece_at(board, r, f)) break;
+    }
+
+    // top right 
+    for (int r = rank - 1, f = file + 1; r >= 0 && f < 8; r--, f++) {
+        add_move(&legal_moves, r, f);
+        if (is_piece_at(board, r, f)) break;
+    }
+
+    // top left 
+    for (int r = rank - 1, f = file - 1; r >= 0 && f >= 0; r--, f--) {
+        add_move(&legal_moves, r, f);
+        if (is_piece_at(board, r, f)) break;
+    }
+
+    remove_same_color_capture(board, &legal_moves, type);
 
     return legal_moves;
 }
@@ -187,8 +260,10 @@ static int is_piece_at(Board* board, int rank, int file) {
     return 0;
 }
 
+// https://stackoverflow.com/questions/26252928/display-msb-to-lsb#26253009
+// I use this with layout 0 on https://gekomad.github.io/Cinnamon/BitboardCalculator/
+// for debugging
 static void print_bitboard(uint64_t n) {
-    // https://stackoverflow.com/questions/26252928/display-msb-to-lsb#26253009
     for (int i = 63; i >= 0; i--) {
         printf("%llu", (n >> i) & 1ULL);
     }
