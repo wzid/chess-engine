@@ -17,7 +17,8 @@ static void handle_mouse_release(Game* game, Board* board);
 static int try_move_selected_piece(Game* game, Board* board, int target_square);
 static void select_piece(Board* board, Game* game, int square, PieceType piece, int start_dragging);
 static void draw_move_hints(const Board* board, Game* game);
-static void draw_ui(const Game* game);
+static void draw_ui(Game* game, Board* board);
+static void reset_game(Game* game, Board* board);
 static void evaluate_game_state(Game* game, Board* board);
 static const char* result_text(const Game* game);
 
@@ -79,9 +80,15 @@ static void draw_board(Game* game, Board* board) {
     if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
         handle_mouse_release(game, board);
     }
+
+    if (game->game_over) {
+        DrawRectangle(0, 0, BOARD_SIZE, BOARD_SIZE, (Color){80, 80, 80, 140});
+    }
 }
 
 void game_loop(Game* game, Board* board) {
+    // Request 4x MSAA before creating the window for smoother rendering
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
     InitWindow(BOARD_SIZE + SIDE_PANEL_WIDTH, BOARD_SIZE, "Chess Engine");
     SetTargetFPS(60);
 
@@ -92,7 +99,7 @@ void game_loop(Game* game, Board* board) {
         ClearBackground((Color){24, 26, 32, 255});
 
         draw_board(game, board);
-        draw_ui(game);
+        draw_ui(game, board);
 
         EndDrawing();
     }
@@ -144,6 +151,11 @@ static void init_textures(Game* game) {
     game->textures[B_BISHOP] = LoadTexture("assets/bb.png");
     game->textures[B_QUEEN] = LoadTexture("assets/bq.png");
     game->textures[B_KING] = LoadTexture("assets/bk.png");
+
+    // Use bilinear filtering for textures to reduce pixelation when scaled
+    for (int i = 0; i < PIECE_COUNT; i++) {
+        SetTextureFilter(game->textures[i], TEXTURE_FILTER_BILINEAR);
+    }
 }
 
 static int square_under_mouse(void) {
@@ -193,7 +205,9 @@ static void handle_mouse_press(Game* game, Board* board, int square, PieceType p
         return;
     }
 
-    if (piece == EMPTY) {
+    uint64_t square_mask = 1ULL << square;
+    // if its an empty piece and not one of the move hints
+    if (piece == EMPTY && !(square_mask & game->selected_piece.legal_moves)) {
         game->selected_piece.active = 0;
         game->selected_piece.legal_moves = 0ULL;
         game->dragging = 0;
@@ -244,7 +258,7 @@ static int try_move_selected_piece(Game* game, Board* board, int target_square) 
     game->selected_piece.active = 0;
     game->selected_piece.legal_moves = 0ULL;
     game->dragging = 0;
-    
+
     game->current_turn = 1 - game->current_turn;
 
     evaluate_game_state(game, board);
@@ -274,8 +288,17 @@ static void draw_move_hints(const Board* board, Game* game) {
     }
 }
 
-static void draw_ui(const Game* game) {
-    int ui_x = BOARD_SIZE + 20;
+static void reset_game(Game* game, Board* board) {
+    *board = init_board();
+    game->selected_piece = (SelectedPiece){.active = 0, .square = -1, .type = EMPTY, .legal_moves = 0ULL};
+    game->dragging = 0;
+    game->current_turn = 0;
+    game->game_over = 0;
+    game->result = 0;
+}
+
+static void draw_ui(Game* game, Board* board) {
+    int ui_x = BOARD_SIZE + 18;
     int ui_y = 20;
 
     DrawText("Current Turn:", ui_x, ui_y, 20, RAYWHITE);
@@ -283,9 +306,32 @@ static void draw_ui(const Game* game) {
     Color turn_color = (game->current_turn == 0) ? (Color){240, 240, 240, 255} : (Color){60, 60, 60, 255};
     DrawText(turn_text, ui_x, ui_y + 30, 28, turn_color);
 
+    // Restart button (smaller, positioned at bottom of side panel)
+    float btn_w = 100.f;
+    float btn_h = 28.f;
+    float btn_x = (ui_x - 18) + (SIDE_PANEL_WIDTH / 2) - (btn_w / 2);
+    float btn_y = BOARD_SIZE - 60.f;
+    Rectangle btn = (Rectangle){btn_x, btn_y, btn_w, btn_h};
+
+    DrawRectangleRec(btn, (Color){200, 200, 200, 255});
+    DrawText("Restart", (int)(btn_x + (btn_w - MeasureText("Restart", 20)) / 2), (int)(btn_y + 4), 20,
+             (Color){20, 20, 20, 255});
+
+    // handle click on restart
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        int mx = GetMouseX();
+        int my = GetMouseY();
+        if (CheckCollisionPointRec((Vector2){(float)mx, (float)my}, btn)) {
+            reset_game(game, board);
+        }
+    }
+
     if (game->game_over) {
         DrawText("Game Over", ui_x, ui_y + 70, 20, (Color){255, 220, 120, 255});
-        DrawText(result_text(game), ui_x, ui_y + 100, 22, (Color){255, 255, 255, 255});
+
+        // draw bold result
+        const char* res = result_text(game);
+        DrawText(res, ui_x, ui_y + 100, 22, (Color){255, 255, 255, 255});
     }
 }
 
