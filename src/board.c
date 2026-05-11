@@ -5,9 +5,14 @@
 #include <unistd.h>
 
 static void print_bitboard(uint64_t n);
+static void update_castling_rules(Board* board, PieceType type, int current_square, int new_square,
+                                  PieceType captured_piece);
+static PieceType piece_at_square(const Board* board, int square);
+static void move_castling_rook(Board* board, PieceType king_type, int current_square, int new_square);
+
 Board init_board() {
     // black at the top and white at the bottom
-    Board chess_board;
+    Board chess_board = {.b_castle_kingside = 1, .b_castle_queenside = 1, .w_castle_kingside = 1, .w_castle_queenside = 1};
     chess_board.bitboards[B_PAWN] = 0xff00;
     chess_board.bitboards[B_ROOK] = 0x81;
     chess_board.bitboards[B_KNIGHT] = 0x42;
@@ -48,13 +53,19 @@ int move_piece(Board* board, PieceType type, int current_square, int new_square)
     uint64_t o_mask = 1ULL << current_square;
     for (int i = 0; i < PIECE_COUNT; i++) {
         if (o_mask & board->bitboards[i]) {
-            // remove the 1 from the bitboard using xor and the mask
+            // remove the 1 from the bitboard using and and "notting" the mask
             board->bitboards[i] &= ~o_mask;
             // add the new location
             board->bitboards[i] |= n_mask;
             break;
         }
     }
+
+    if (type == B_KING || type == W_KING) {
+        move_castling_rook(board, type, current_square, new_square);
+    }
+
+    update_castling_rules(board, type, current_square, new_square, piece_at_square(board, new_square));
 
     return 1;
 }
@@ -67,10 +78,9 @@ static BITBOARD legal_queen_moves(Board* board, PieceType type, int current_squa
 static BITBOARD legal_king_moves(Board* board, PieceType type, int current_square);
 static void add_move(BITBOARD* legal_moves, int rank, int file);
 static void remove_same_color_capture(Board* board, BITBOARD* legal_moves, PieceType type);
-static PieceType piece_at_square(const Board* board, int square);
-static int is_black_piece(PieceType type);
 static int in_bounds(int rank, int file);
 static int is_square_attacked(const Board* board, int square, int attacker_must_be_black);
+static int can_castle(Board* board, PieceType king_type, int current_square, int is_kingside);
 
 // Should return a BITBOARD of all legal moves by that piece type
 BITBOARD get_legal_moves(Board* board, PieceType type, int current_square) {
@@ -283,6 +293,13 @@ static BITBOARD legal_king_moves(Board* board, PieceType king_type, int current_
         }
     }
 
+    if (can_castle(board, king_type, current_square, 1)) {
+        add_move(&legal_moves, rank, file + 2);
+    }
+    if (can_castle(board, king_type, current_square, 0)) {
+        add_move(&legal_moves, rank, file - 2);
+    }
+
     return legal_moves;
 }
 
@@ -398,6 +415,64 @@ static int is_square_attacked(const Board* board, int square, int attacker_must_
     return 0;
 }
 
+static int can_castle(Board* board, PieceType king_type, int current_square, int is_kingside) {
+    int rank = current_square / 8, file = current_square % 8;
+    int attacker_must_be_black = king_type == W_KING;
+
+    if (is_kingside) {
+        if (is_piece_at(board, rank, file + 1) || is_piece_at(board, rank, file + 2)) {
+            return 0;
+        }
+        if (is_square_attacked(board, current_square + 1, attacker_must_be_black) ||
+            is_square_attacked(board, current_square + 2, attacker_must_be_black)) {
+            return 0;
+        }
+
+        return 1;
+    } else {
+        if (is_piece_at(board, rank, file - 1) || is_piece_at(board, rank, file - 2) || is_piece_at(board, rank, file - 3)) {
+            return 0;
+        }
+        if (is_square_attacked(board, current_square - 1, attacker_must_be_black) ||
+            is_square_attacked(board, current_square - 2, attacker_must_be_black)) {
+            return 0;
+        }
+
+        return 1;
+    }
+}
+
+static void move_castling_rook(Board* board, PieceType king_type, int current_square, int new_square) {
+    // if we are moving a king and it moves 2 squares then it has to be a castle!
+    // fun little trick
+    if ((new_square - current_square) != 2 && (current_square - new_square) != 2) {
+        return;
+    }
+    int is_kingside = (new_square > current_square) ? 1 : 0;
+    int direction = is_kingside ? -2 : 3;
+    int is_king_black = king_type == B_KING;
+
+    if (is_king_black) {
+        int square = is_kingside ? 7 : 0;
+        // on the kingside the rook is at the 7th square
+        // on the queenside the rook is at the 0th square
+        // we are removing it from the bitboard
+        board->bitboards[B_ROOK] &= ~(1ULL << square);
+        // 5 is the square where it ends up at on kingside
+        // 3 is the square where it ends up at on kingside
+        board->bitboards[B_ROOK] |= 1ULL << (square + direction);
+    } else {
+        int square = is_kingside ? 63 : 56;
+        // on the kingside the rook is at the 63rd square
+        // on the queenside the rook is at the 56th square
+        // we are removing it from the bitboard
+        board->bitboards[W_ROOK] &= ~(1ULL << square);
+        // 59 is the square where it ends up at on kingside
+        // 61 is the square where it ends up at on kingside
+        board->bitboards[W_ROOK] |= 1ULL << (square + direction);
+    }
+}
+
 int is_piece_at(const Board* board, int rank, int file) {
     uint64_t mask = 1ULL << ((rank * 8) + file);
     for (int i = 0; i < PIECE_COUNT - 1; i++) {
@@ -406,6 +481,46 @@ int is_piece_at(const Board* board, int rank, int file) {
         }
     }
     return 0;
+}
+
+static void update_castling_rules(Board* board, PieceType type, int current_square, int new_square,
+                                  PieceType captured_piece) {
+    // if the king moves then it can no longer castle
+    if (type == B_KING && (board->b_castle_kingside || board->b_castle_queenside)) {
+        board->b_castle_kingside = 0;
+        board->b_castle_queenside = 0;
+    }
+    if (type == W_KING && (board->w_castle_kingside || board->w_castle_queenside)) {
+        board->w_castle_kingside = 0;
+        board->w_castle_queenside = 0;
+    }
+
+    // if the rook moves then we can no longer castle
+    if (type == B_ROOK && current_square == 0 && board->b_castle_queenside) {
+        board->b_castle_queenside = 0;
+    }
+
+    if (type == B_ROOK && current_square == 7 && board->b_castle_kingside) {
+        board->b_castle_kingside = 0;
+    }
+
+    if (type == W_ROOK && current_square == 56 && board->w_castle_queenside) {
+        board->w_castle_queenside = 0;
+    }
+
+    if (type == W_ROOK && current_square == 63 && board->w_castle_kingside) {
+        board->w_castle_kingside = 0;
+    }
+
+    // if the captured piece is one of the rooks then we need to disallow castling
+    if (captured_piece == B_ROOK) {
+        if (new_square == 0) board->b_castle_queenside = 0;
+        if (new_square == 7) board->b_castle_kingside = 0;
+    }
+    if (captured_piece == W_ROOK) {
+        if (new_square == 56) board->w_castle_queenside = 0;
+        if (new_square == 63) board->w_castle_kingside = 0;
+    }
 }
 
 // https://stackoverflow.com/questions/26252928/display-msb-to-lsb#26253009

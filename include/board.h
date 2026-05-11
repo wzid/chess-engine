@@ -13,6 +13,10 @@ typedef enum PieceType {
 
 typedef struct {
     BITBOARD bitboards[PIECE_COUNT];
+    int b_castle_queenside;
+    int b_castle_kingside;
+    int w_castle_queenside;
+    int w_castle_kingside;
 } Board;
 
 Board init_board();
