@@ -1,13 +1,10 @@
 #include "board.h"
 
-#include <raylib.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 static void print_bitboard(uint64_t n);
-static BITBOARD get_legal_moves(Board* board, PieceType type, int current_square);
-
 Board init_board() {
     // black at the top and white at the bottom
     Board chess_board;
@@ -27,7 +24,7 @@ Board init_board() {
     return chess_board;
 }
 
-void move_piece(Board* board, PieceType type, int current_square, int new_square) {
+int move_piece(Board* board, PieceType type, int current_square, int new_square) {
     // check if legal
     // printf("Moving Piece\n");
 
@@ -37,7 +34,7 @@ void move_piece(Board* board, PieceType type, int current_square, int new_square
     // not a legal move!!
     if (!(n_mask & legal_moves)) {
         // do something
-        return;
+        return 0;
     }
 
     // remove old piece for capture
@@ -58,6 +55,8 @@ void move_piece(Board* board, PieceType type, int current_square, int new_square
             break;
         }
     }
+
+    return 1;
 }
 
 static BITBOARD legal_pawn_moves(Board* board, PieceType type, int current_square);
@@ -65,12 +64,12 @@ static BITBOARD legal_knight_moves(Board* board, PieceType type, int current_squ
 static BITBOARD legal_rook_moves(Board* board, PieceType type, int current_square);
 static BITBOARD legal_bishop_moves(Board* board, PieceType type, int current_square);
 static BITBOARD legal_queen_moves(Board* board, PieceType type, int current_square);
+static BITBOARD legal_king_moves(Board* board, PieceType type, int current_square);
 static void add_move(BITBOARD* legal_moves, int rank, int file);
 static void remove_same_color_capture(Board* board, BITBOARD* legal_moves, PieceType type);
-static int is_piece_at(Board* board, int rank, int file);
 
 // Should return a BITBOARD of all legal moves by that piece type
-static BITBOARD get_legal_moves(Board* board, PieceType type, int current_square) {
+BITBOARD get_legal_moves(Board* board, PieceType type, int current_square) {
     switch (type) {
         case B_PAWN:
         case W_PAWN:
@@ -87,6 +86,9 @@ static BITBOARD get_legal_moves(Board* board, PieceType type, int current_square
         case B_QUEEN:
         case W_QUEEN:
             return legal_queen_moves(board, type, current_square);
+        case B_KING:
+        case W_KING:
+            return legal_king_moves(board, type, current_square);
         default:
             return 0ULL;
     }
@@ -201,25 +203,25 @@ static BITBOARD legal_bishop_moves(Board* board, PieceType type, int current_squ
 
     BITBOARD legal_moves = 0ULL;
 
-    // bottom right 
+    // bottom right
     for (int r = rank + 1, f = file + 1; r < 8 && f < 8; r++, f++) {
         add_move(&legal_moves, r, f);
         if (is_piece_at(board, r, f)) break;
     }
 
-    // bottom left 
+    // bottom left
     for (int r = rank + 1, f = file - 1; r < 8 && f >= 0; r++, f--) {
         add_move(&legal_moves, r, f);
         if (is_piece_at(board, r, f)) break;
     }
 
-    // top right 
+    // top right
     for (int r = rank - 1, f = file + 1; r >= 0 && f < 8; r--, f++) {
         add_move(&legal_moves, r, f);
         if (is_piece_at(board, r, f)) break;
     }
 
-    // top left 
+    // top left
     for (int r = rank - 1, f = file - 1; r >= 0 && f >= 0; r--, f--) {
         add_move(&legal_moves, r, f);
         if (is_piece_at(board, r, f)) break;
@@ -235,6 +237,59 @@ static BITBOARD legal_queen_moves(Board* board, PieceType type, int current_squa
     uint64_t legal_moves = legal_bishop_moves(board, type, current_square) | legal_rook_moves(board, type, current_square);
     // print_bitboard(legal_moves);
     return legal_moves;
+}
+
+static void add_king_moves(BITBOARD* moves, int rank, int file);
+
+static BITBOARD legal_king_moves(Board* board, PieceType type, int current_square) {
+    int rank = current_square / 8;
+    int file = current_square % 8;
+
+    BITBOARD legal_moves = 0ULL;
+
+    add_king_moves(&legal_moves, rank, file);
+
+    remove_same_color_capture(board, &legal_moves, type);
+
+    // need to make sure that the opponent is not attacking any of the legal moves
+    int start = type == B_KING ? W_PAWN : B_PAWN;
+    int end = type == B_KING ? W_KING : B_KING;
+
+    for (int i = 0; i < 64; i++) {
+        uint64_t square_mask = 1ULL << i;
+        for (int opp_type = start; opp_type <= end; opp_type++) {
+
+            BITBOARD opponent_legal_moves = 0LL;
+            // if there exists an opponents piece then we need to check the legal moves
+            if (square_mask & board->bitboards[opp_type]) {
+                // if the opponent type is the king just check the adjacent squares for that other king
+                if (opp_type == end) {
+                    int opp_rank = i / 8, opp_file = i % 8;
+                    add_king_moves(&opponent_legal_moves, opp_rank, opp_file);
+                } else {
+                    // otherwise get the legal moves of the piece
+                    opponent_legal_moves = get_legal_moves(board, opp_type, i);
+                }
+                // if and moves in opponent_legal_moves exist in legal_moves then we remove it from legal_moves
+                if (opponent_legal_moves & legal_moves) {
+                    legal_moves &= ~opponent_legal_moves;
+                }
+            }
+        }
+    }
+
+    return legal_moves;
+}
+
+static void add_king_moves(BITBOARD* moves, int rank, int file) {
+    add_move(moves, rank + 1, file);
+    add_move(moves, rank - 1, file);
+    add_move(moves, rank - 1, file + 1);
+    add_move(moves, rank - 1, file - 1);
+    add_move(moves, rank + 1, file - 1);
+    add_move(moves, rank + 1, file + 1);
+    add_move(moves, rank, file + 1);
+    add_move(moves, rank, file - 1);
 }
 
 static void add_move(BITBOARD* legal_moves, int rank, int file) {
@@ -260,7 +315,7 @@ static void remove_same_color_capture(Board* board, BITBOARD* legal_moves, Piece
     }
 }
 
-static int is_piece_at(Board* board, int rank, int file) {
+int is_piece_at(const Board* board, int rank, int file) {
     uint64_t mask = 1ULL << ((rank * 8) + file);
     for (int i = 0; i < PIECE_COUNT - 1; i++) {
         if (mask & board->bitboards[i]) {

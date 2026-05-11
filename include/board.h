@@ -17,6 +17,13 @@ typedef struct {
 
 Board init_board();
 
-void move_piece(Board *board, PieceType type, int current_square, int new_square);
+int move_piece(Board *board, PieceType type, int current_square, int new_square);
+
+BITBOARD get_legal_moves(Board* board, PieceType type, int current_square);
+
+int is_piece_at(const Board* board, int rank, int file);
+#define is_piece_at_sq(b, sq) is_piece_at(b, (sq) / 8, (sq) % 8)
+
+
 
 #endif

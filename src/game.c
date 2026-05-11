@@ -4,16 +4,27 @@
 
 #define BOARD_SIZE 640
 #define TILE_SIZE (BOARD_SIZE / 8)
+#define SIDE_PANEL_WIDTH 240
 
 static PieceType piece_at(const Board* board, int square);
 static void draw_piece(Texture2D tex, int x, int y);
 static void init_textures(Game* game);
-static int is_mouse_within(int x, int y);
+static int square_under_mouse(void);
+static int is_white_piece(PieceType piece);
+static int piece_belongs_to_turn(PieceType piece, int current_turn);
+static void handle_mouse_press(Game* game, Board* board, int square, PieceType piece);
+static void handle_mouse_release(Game* game, Board* board);
+static int try_move_selected_piece(Game* game, Board* board, int target_square);
+static void select_piece(Board *board, Game* game, int square, PieceType piece, int start_dragging);
+static void draw_move_hints(const Board* board, Game* game);
+static void draw_ui(const Game* game);
 
 Game init_game() {
-    Game game = {.light_color = (Color){240, 217, 181, 255},
-                 .dark_color = (Color){181, 136, 99, 255},
-                 .held_piece = (HeldPiece){.active = 0, .square = -1}};
+    Game game = {.light_color = (Color){235, 235, 200, 255},
+                 .dark_color = (Color){115, 150, 80, 255},
+                 .selected_piece = (SelectedPiece){.active = 0, .square = -1, .type = EMPTY},
+                 .dragging = 0,
+                 .current_turn = 0};
     return game;
 }
 
@@ -22,42 +33,46 @@ static void draw_board(Game* game, Board* board) {
         for (int file = 0; file < 8; file++) {
             int x = file * TILE_SIZE;
             int y = rank * TILE_SIZE;
-            Color square_color = ((rank + file) % 2 == 0) ? game->light_color : game->dark_color;
-            DrawRectangle(x, y, TILE_SIZE, TILE_SIZE, square_color);
-        }
-    }
-
-    for (int rank = 0; rank < 8; rank++) {
-        for (int file = 0; file < 8; file++) {
-            int x = file * TILE_SIZE;
-            int y = rank * TILE_SIZE;
             int square = rank * 8 + file;
-
+            Color square_color = ((rank + file) % 2 == 0) ? game->light_color : game->dark_color;
             PieceType piece = piece_at(board, square);
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && is_mouse_within(x, y)) {
-                if (!game->held_piece.active && piece != EMPTY) {
-                    game->held_piece = (HeldPiece){.active = 1, .square = square, .type = piece};
-                } else {
-                    move_piece(board, game->held_piece.type, game->held_piece.square, square);
-                    game->held_piece = (HeldPiece){.active = 0};
-                }
+
+            if (game->selected_piece.active && game->selected_piece.square == square) {
+                DrawRectangle(x, y, TILE_SIZE, TILE_SIZE, (Color) {245, 245, 130, 255});
+            } else {
+                DrawRectangle(x, y, TILE_SIZE, TILE_SIZE, square_color);
+            }
+
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && square_under_mouse() == square) {
+                handle_mouse_press(game, board, square, piece);
             }
 
             if (piece != EMPTY) {
-                if (game->held_piece.active && game->held_piece.square == square) continue;
+                if (game->selected_piece.active && game->selected_piece.square == square && game->dragging) {
+                    continue;
+                }
 
                 draw_piece(game->textures[piece], x, y);
             }
         }
     }
 
-    if (game->held_piece.active) {
-        draw_piece(game->textures[game->held_piece.type], GetMouseX() - (TILE_SIZE / 2), GetMouseY() - (TILE_SIZE / 2));
+    draw_move_hints(board, game);
+
+    if (game->selected_piece.active) {
+
+        if (game->dragging) {
+            draw_piece(game->textures[game->selected_piece.type], GetMouseX() - (TILE_SIZE / 2), GetMouseY() - (TILE_SIZE / 2));
+        }
+    }
+
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+        handle_mouse_release(game, board);
     }
 }
 
 void game_loop(Game* game, Board* board) {
-    InitWindow(BOARD_SIZE, BOARD_SIZE, "Chess Engine w/raylib");
+    InitWindow(BOARD_SIZE + SIDE_PANEL_WIDTH, BOARD_SIZE, "Chess Engine");
     SetTargetFPS(60);
 
     init_textures(game);
@@ -67,6 +82,7 @@ void game_loop(Game* game, Board* board) {
         ClearBackground((Color){24, 26, 32, 255});
 
         draw_board(game, board);
+        draw_ui(game);
 
         EndDrawing();
     }
@@ -79,13 +95,10 @@ void game_loop(Game* game, Board* board) {
 }
 
 static void draw_piece(Texture2D tex, int x, int y) {
-    if (tex.id == 0) return;  // defensive: texture not loaded
+    if (tex.id == 0) return;
 
-    DrawTexturePro(tex, (Rectangle){0, 0, (float)tex.width, (float)tex.height},  // source rectangle (full image)
-                   (Rectangle){x, y, TILE_SIZE, TILE_SIZE}, (Vector2){0, 0},     // origin offset (not needed here)
-                   0.0f,                                                         // rotation
-                   WHITE                                                         // tint (WHITE = no tint)
-    );
+    DrawTexturePro(tex, (Rectangle){0, 0, (float)tex.width, (float)tex.height},
+                   (Rectangle){x, y, TILE_SIZE, TILE_SIZE}, (Vector2){0, 0}, 0.0f, WHITE);
 }
 
 static PieceType piece_at(const Board* board, int square) {
@@ -123,8 +136,128 @@ static void init_textures(Game* game) {
     game->textures[B_KING] = LoadTexture("assets/bk.png");
 }
 
-static int is_mouse_within(int x, int y) {
+static int square_under_mouse(void) {
     int mouse_x = GetMouseX();
     int mouse_y = GetMouseY();
-    return mouse_x >= x && mouse_x <= x + TILE_SIZE && mouse_y >= y && mouse_y <= y + TILE_SIZE;
+
+    if (mouse_x < 0 || mouse_x >= BOARD_SIZE || mouse_y < 0 || mouse_y >= BOARD_SIZE) {
+        return -1;
+    }
+
+    return (mouse_y / TILE_SIZE) * 8 + (mouse_x / TILE_SIZE);
+}
+
+static int is_white_piece(PieceType piece) {
+    return piece >= W_PAWN && piece <= W_KING;
+}
+
+static int piece_belongs_to_turn(PieceType piece, int current_turn) {
+    if (piece == EMPTY) return 0;
+    return current_turn == 0 ? is_white_piece(piece) : !is_white_piece(piece);
+}
+
+static int try_move_selected_piece(Game* game, Board* board, int target_square) {
+    if (!game->selected_piece.active) {
+        return 0;
+    }
+
+    if (target_square == game->selected_piece.square) {
+        return 0;
+    }
+
+    if (!move_piece(board, game->selected_piece.type, game->selected_piece.square, target_square)) {
+        return 0;
+    }
+
+    game->selected_piece.active = 0;
+    game->selected_piece.legal_moves = 0ULL;
+    game->dragging = 0;
+    game->current_turn = 1 - game->current_turn;
+    return 1;
+}
+
+static void select_piece(Board *board, Game* game, int square, PieceType piece, int start_dragging) {
+    game->selected_piece = (SelectedPiece){.active = 1, .square = square, .type = piece, .legal_moves = get_legal_moves(board, piece, square)};
+    game->dragging = start_dragging;
+}
+
+static void handle_mouse_press(Game* game, Board* board, int square, PieceType piece) {
+    if (!game->selected_piece.active) {
+        if (piece_belongs_to_turn(piece, game->current_turn)) {
+            select_piece(board, game, square, piece, 1);
+        }
+        return;
+    }
+
+    if (square == game->selected_piece.square) {
+        game->dragging = 1;
+        return;
+    }
+
+    if (piece_belongs_to_turn(piece, game->current_turn)) {
+        select_piece(board, game, square, piece, 1);
+        return;
+    }
+
+    try_move_selected_piece(game, board, square);
+}
+
+static void handle_mouse_release(Game* game, Board* board) {
+    if (!game->dragging || !game->selected_piece.active) {
+        return;
+    }
+
+    int release_square = square_under_mouse();
+    if (release_square >= 0) {
+        if (try_move_selected_piece(game, board, release_square)) {
+            return;
+        }
+    }
+
+    game->dragging = 0;
+}
+
+static void draw_move_hints(const Board* board, Game* game) {
+    if (!game->selected_piece.active) {
+        return;
+    }
+
+    for (int square = 0; square < 64; square++) {
+        uint64_t mask = 1ULL << square;
+        // game->selected_piece.legal_moves is set in the select_piece function
+        if (!(mask & game->selected_piece.legal_moves)) {
+            continue;
+        }
+        int x = (square % 8) * TILE_SIZE;
+        int y = (square / 8) * TILE_SIZE;
+
+        if (is_piece_at_sq(board, square)) {
+            DrawRing((Vector2){x + TILE_SIZE / 2, y + TILE_SIZE / 2}, 34, 40, 0, 360, 32, (Color){40, 40, 40, 100});
+
+        } else {
+            DrawCircle(x + TILE_SIZE / 2, y + TILE_SIZE / 2, 15, (Color){40, 40, 40, 100});
+        }
+        
+    }
+}
+
+
+static void draw_ui(const Game* game) {
+    int ui_x = BOARD_SIZE + 20;
+    int ui_y = 20;
+
+    DrawText("Current Turn:", ui_x, ui_y, 20, RAYWHITE);
+    const char* turn_text = (game->current_turn == 0) ? "WHITE" : "BLACK";
+    Color turn_color = (game->current_turn == 0) ? (Color){240, 240, 240, 255} : (Color){60, 60, 60, 255};
+    DrawText(turn_text, ui_x, ui_y + 30, 28, turn_color);
+
+    DrawText("---", ui_x, ui_y + 80, 16, (Color){180, 180, 180, 255});
+    DrawText("Click a piece to", ui_x, ui_y + 110, 14, (Color){180, 180, 180, 255});
+    DrawText("select it and", ui_x, ui_y + 130, 14, (Color){180, 180, 180, 255});
+    DrawText("see legal moves", ui_x, ui_y + 150, 14, (Color){180, 180, 180, 255});
+    DrawText("or drag it", ui_x, ui_y + 170, 14, (Color){180, 180, 180, 255});
+
+    if (game->selected_piece.active) {
+        DrawText("Selected!", ui_x, ui_y + 210, 18, (Color){100, 200, 100, 255});
+    }
 }

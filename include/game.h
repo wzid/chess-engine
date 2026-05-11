@@ -8,13 +8,16 @@ typedef struct {
     int active;
     int square;
     PieceType type;
-} HeldPiece;
+    BITBOARD legal_moves;
+} SelectedPiece;
 
 typedef struct {
     Color light_color;
     Color dark_color;
     Texture2D textures[PIECE_COUNT];
-    HeldPiece held_piece;
+    SelectedPiece selected_piece;
+    int dragging;
+    int current_turn;  // 0 = white, 1 = black
 } Game;
 
 Game init_game();
