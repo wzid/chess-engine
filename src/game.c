@@ -38,7 +38,7 @@ static void draw_board(Game* game, Board* board) {
                 if (!game->held_piece.active && piece != EMPTY) {
                     game->held_piece = (HeldPiece){.active = 1, .square = square, .type = piece};
                 } else {
-                    move_piece(board, game->held_piece.square, square);
+                    move_piece(board, game->held_piece.type, game->held_piece.square, square);
                     game->held_piece = (HeldPiece){.active = 0};
                 }
             }

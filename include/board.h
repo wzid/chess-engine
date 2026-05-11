@@ -8,8 +8,7 @@ typedef uint64_t BITBOARD;
 typedef enum PieceType {
     B_PAWN, B_KNIGHT, B_BISHOP, B_ROOK, B_QUEEN, B_KING,
     W_PAWN, W_KNIGHT, W_BISHOP, W_ROOK, W_QUEEN, W_KING,
-    EMPTY,
-    PIECE_COUNT
+    PIECE_COUNT, EMPTY
 } PieceType;
 
 typedef struct {
@@ -18,6 +17,6 @@ typedef struct {
 
 Board init_board();
 
-void move_piece(Board *board, int current_square, int new_square);
+void move_piece(Board *board, PieceType type, int current_square, int new_square);
 
 #endif
