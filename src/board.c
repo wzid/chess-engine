@@ -17,7 +17,7 @@ int move_results_in_check(Board* board, PieceType type, int current_square, int 
 
 Board init_board() {
     // black at the top and white at the bottom
-    Board chess_board = {.b_castle_kingside = 1, .b_castle_queenside = 1, .w_castle_kingside = 1, .w_castle_queenside = 1};
+    Board chess_board = {.b_castle_kingside = 1, .b_castle_queenside = 1, .w_castle_kingside = 1, .w_castle_queenside = 1, .halfmove_clock = 0};
     chess_board.bitboards[B_PAWN] = 0xff00;
     chess_board.bitboards[B_ROOK] = 0x81;
     chess_board.bitboards[B_KNIGHT] = 0x42;
@@ -47,12 +47,10 @@ int move_piece(Board* board, PieceType type, int current_square, int new_square)
         return 0;
     }
 
-    // remove old piece for capture
-    for (int i = 0; i < PIECE_COUNT; i++) {
-        if (n_mask & board->bitboards[i]) {
-            board->bitboards[i] &= ~n_mask;
-            break;
-        }
+    // detect and remove captured piece (if any)
+    PieceType captured_piece = piece_at_square(board, new_square);
+    if (captured_piece != EMPTY) {
+        board->bitboards[captured_piece] &= ~n_mask;
     }
 
     uint64_t o_mask = 1ULL << current_square;
@@ -70,7 +68,15 @@ int move_piece(Board* board, PieceType type, int current_square, int new_square)
         move_castling_rook(board, type, current_square, new_square);
     }
 
-    update_castling_rules(board, type, current_square, new_square, piece_at_square(board, new_square));
+    update_castling_rules(board, type, current_square, new_square, captured_piece);
+
+    // Update halfmove clock: reset on pawn move or any capture, otherwise increment
+    int is_pawn = (type == B_PAWN || type == W_PAWN);
+    if (is_pawn || captured_piece != EMPTY) {
+        board->halfmove_clock = 0;
+    } else {
+        board->halfmove_clock += 1;
+    }
 
     return 1;
 }
@@ -118,14 +124,16 @@ BITBOARD get_legal_moves(Board* board, PieceType type, int current_square) {
             return 0ULL;
     }
 
-    // Filter out the legal moves that result in check
+    // Filter out the legal moves that result in check using bit-scan
     BITBOARD filtered = 0ULL;
-    for (int s = 0; s < 64; s++) {
+    BITBOARD tmp = raw;
+    while (tmp) {
+        int s = __builtin_ctzll(tmp);
         uint64_t m = 1ULL << s;
-        if (!(raw & m)) continue;
         if (!move_results_in_check(board, type, current_square, s)) {
             filtered |= m;
         }
+        tmp &= tmp - 1;
     }
 
     return filtered;
@@ -166,9 +174,9 @@ int move_results_in_check(Board* board, PieceType type, int current_square, int 
     if (type == B_KING || type == W_KING) {
         king_square = new_square;
     } else {
-        // find king square
-        for (int sq = 0; sq < 64; sq++) {
-            if (1ULL << sq & test.bitboards[king]) { king_square = sq; break; }
+        // find king square using bit-scan (faster than looping 0..63)
+        if (test.bitboards[king]) {
+            king_square = __builtin_ctzll(test.bitboards[king]);
         }
     }
 
@@ -337,15 +345,15 @@ static BITBOARD legal_king_moves(Board* board, PieceType king_type, int current_
     // Filter out squares that would still be attacked after the king moves there.
     int attacker_must_be_black = king_type == W_KING;
 
-    for (int square = 0; square < 64; square++) {
+    // Filter king moves by scanning candidate squares with bit-scan
+    BITBOARD candidates = legal_moves;
+    BITBOARD filtered_king_moves = legal_moves;
+    while (candidates) {
+        int square = __builtin_ctzll(candidates);
         uint64_t square_mask = 1ULL << square;
-        if (!(square_mask & legal_moves)) {
-            continue;
-        }
 
         // we are simulating a move to see if it is attacked.
         // we have to remove the king's old position and remove the captured piece
-
         Board test_board = *board;
         uint64_t current_mask = 1ULL << current_square;
         // removing the current square
@@ -359,9 +367,12 @@ static BITBOARD legal_king_moves(Board* board, PieceType king_type, int current_
 
         // if it is attacked after the king potentially moves there then we don't want to allow it as a legal move3
         if (is_square_attacked(&test_board, square, attacker_must_be_black)) {
-            legal_moves &= ~square_mask;
+            filtered_king_moves &= ~square_mask;
         }
+
+        candidates &= candidates - 1;
     }
+    legal_moves = filtered_king_moves;
 
     if (can_castle(board, king_type, current_square, 1)) {
         add_move(&legal_moves, rank, file + 2);
@@ -601,4 +612,54 @@ __attribute__((unused)) static void print_bitboard(uint64_t n) {
         printf("%llu", (n >> i) & 1ULL);
     }
     printf("\n");
+}
+
+// Helper: return 1 if the side to move (black if is_black==1) has any legal move
+static int side_has_any_legal_move(Board* board, int is_black) {
+    int start = is_black ? B_PAWN : W_PAWN;
+    int end = is_black ? B_KING : W_KING;
+
+    for (int pt = start; pt <= end; pt++) {
+        BITBOARD bb = board->bitboards[pt];
+        if (!bb) continue;
+        BITBOARD b = bb;
+        while (b) {
+            int sq = __builtin_ctzll(b);
+            if (get_legal_moves(board, (PieceType)pt, sq) != 0ULL) return 1;
+            b &= b - 1;
+        }
+    }
+    return 0;
+}
+
+int is_checkmate(Board* board, int black_to_move) {
+    if (side_has_any_legal_move(board, black_to_move)) return 0;
+
+    // find king square
+    PieceType king_pt = black_to_move ? B_KING : W_KING;
+    BITBOARD kbb = board->bitboards[king_pt];
+    if (!kbb) return 0; // no king? treat as not checkmate here
+    int king_sq = __builtin_ctzll(kbb);
+
+    int attacker_is_black = !black_to_move;
+    if (is_square_attacked(board, king_sq, attacker_is_black)) return 1;
+    return 0;
+}
+
+int is_stalemate(Board* board, int black_to_move) {
+    if (side_has_any_legal_move(board, black_to_move)) return 0;
+
+    // find king square
+    PieceType king_pt = black_to_move ? B_KING : W_KING;
+    BITBOARD kbb = board->bitboards[king_pt];
+    if (!kbb) return 0; // no king? treat as not stalemate
+    int king_sq = __builtin_ctzll(kbb);
+
+    int attacker_is_black = !black_to_move;
+    if (!is_square_attacked(board, king_sq, attacker_is_black)) return 1;
+    return 0;
+}
+
+int is_fifty_move_draw(Board* board) {
+    return board->halfmove_clock >= 100;
 }

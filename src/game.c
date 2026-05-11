@@ -18,17 +18,27 @@ static int try_move_selected_piece(Game* game, Board* board, int target_square);
 static void select_piece(Board* board, Game* game, int square, PieceType piece, int start_dragging);
 static void draw_move_hints(const Board* board, Game* game);
 static void draw_ui(const Game* game);
+static void evaluate_game_state(Game* game, Board* board);
+static const char* result_text(const Game* game);
 
 Game init_game() {
     Game game = {.light_color = (Color){235, 235, 200, 255},
                  .dark_color = (Color){115, 150, 80, 255},
                  .selected_piece = (SelectedPiece){.active = 0, .square = -1, .type = EMPTY},
                  .dragging = 0,
-                 .current_turn = 0};
+                 .current_turn = 0,
+                 .game_over = 0,
+                 .result = 0};
     return game;
 }
 
 static void draw_board(Game* game, Board* board) {
+    if (game->game_over) {
+        game->selected_piece.active = 0;
+        game->selected_piece.legal_moves = 0ULL;
+        game->dragging = 0;
+    }
+
     for (int rank = 0; rank < 8; rank++) {
         for (int file = 0; file < 8; file++) {
             int x = file * TILE_SIZE;
@@ -161,6 +171,10 @@ static void select_piece(Board* board, Game* game, int square, PieceType piece, 
 }
 
 static void handle_mouse_press(Game* game, Board* board, int square, PieceType piece) {
+    if (game->game_over) {
+        return;
+    }
+
     if (!game->selected_piece.active) {
         if (piece_belongs_to_turn(piece, game->current_turn)) {
             select_piece(board, game, square, piece, 1);
@@ -190,6 +204,10 @@ static void handle_mouse_press(Game* game, Board* board, int square, PieceType p
 }
 
 static void handle_mouse_release(Game* game, Board* board) {
+    if (game->game_over) {
+        return;
+    }
+
     if (!game->dragging || !game->selected_piece.active) {
         return;
     }
@@ -209,6 +227,10 @@ static int try_move_selected_piece(Game* game, Board* board, int target_square) 
         return 0;
     }
 
+    if (game->game_over) {
+        return 0;
+    }
+
     // if you didnt move it at all.
     if (target_square == game->selected_piece.square) {
         return 0;
@@ -224,6 +246,8 @@ static int try_move_selected_piece(Game* game, Board* board, int target_square) 
     game->dragging = 0;
     
     game->current_turn = 1 - game->current_turn;
+
+    evaluate_game_state(game, board);
     return 1;
 }
 
@@ -259,13 +283,34 @@ static void draw_ui(const Game* game) {
     Color turn_color = (game->current_turn == 0) ? (Color){240, 240, 240, 255} : (Color){60, 60, 60, 255};
     DrawText(turn_text, ui_x, ui_y + 30, 28, turn_color);
 
-    DrawText("---", ui_x, ui_y + 80, 16, (Color){180, 180, 180, 255});
-    DrawText("Click a piece to", ui_x, ui_y + 110, 14, (Color){180, 180, 180, 255});
-    DrawText("select it and", ui_x, ui_y + 130, 14, (Color){180, 180, 180, 255});
-    DrawText("see legal moves", ui_x, ui_y + 150, 14, (Color){180, 180, 180, 255});
-    DrawText("or drag it", ui_x, ui_y + 170, 14, (Color){180, 180, 180, 255});
+    if (game->game_over) {
+        DrawText("Game Over", ui_x, ui_y + 70, 20, (Color){255, 220, 120, 255});
+        DrawText(result_text(game), ui_x, ui_y + 100, 22, (Color){255, 255, 255, 255});
+    }
+}
 
-    if (game->selected_piece.active) {
-        DrawText("Selected!", ui_x, ui_y + 210, 18, (Color){100, 200, 100, 255});
+static void evaluate_game_state(Game* game, Board* board) {
+    if (is_checkmate(board, game->current_turn)) {
+        game->game_over = 1;
+        game->result = (game->current_turn == 0) ? 2 : 1;
+        return;
+    }
+
+    if (is_stalemate(board, game->current_turn) || is_fifty_move_draw(board)) {
+        game->game_over = 1;
+        game->result = 3;
+    }
+}
+
+static const char* result_text(const Game* game) {
+    switch (game->result) {
+        case 1:
+            return "White wins";
+        case 2:
+            return "Black wins";
+        case 3:
+            return "Draw";
+        default:
+            return "";
     }
 }
