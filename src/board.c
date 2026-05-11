@@ -67,6 +67,10 @@ static BITBOARD legal_queen_moves(Board* board, PieceType type, int current_squa
 static BITBOARD legal_king_moves(Board* board, PieceType type, int current_square);
 static void add_move(BITBOARD* legal_moves, int rank, int file);
 static void remove_same_color_capture(Board* board, BITBOARD* legal_moves, PieceType type);
+static PieceType piece_at_square(const Board* board, int square);
+static int is_black_piece(PieceType type);
+static int in_bounds(int rank, int file);
+static int is_square_attacked(const Board* board, int square, int attacker_must_be_black);
 
 // Should return a BITBOARD of all legal moves by that piece type
 BITBOARD get_legal_moves(Board* board, PieceType type, int current_square) {
@@ -147,16 +151,13 @@ static BITBOARD legal_knight_moves(Board* board, PieceType type, int current_squ
 
     BITBOARD legal_moves = 0ULL;
 
-    add_move(&legal_moves, rank - 2, file - 1);
-    add_move(&legal_moves, rank - 2, file + 1);
+    static const int knight_offsets[8][2] = {{-2, -1}, {-2, 1}, {-1, -2}, {-1, 2}, {1, -2}, {1, 2}, {2, -1}, {2, 1}};
 
-    add_move(&legal_moves, rank - 1, file - 2);
-    add_move(&legal_moves, rank - 1, file + 2);
-    add_move(&legal_moves, rank + 1, file + 2);
-    add_move(&legal_moves, rank + 1, file - 2);
-
-    add_move(&legal_moves, rank + 2, file - 1);
-    add_move(&legal_moves, rank + 2, file + 1);
+    for (int i = 0; i < 8; i++) {
+        int rank_delta = knight_offsets[i][0];
+        int file_delta = knight_offsets[i][1];
+        add_move(&legal_moves, rank + rank_delta, file + file_delta);
+    }
 
     remove_same_color_capture(board, &legal_moves, type);
 
@@ -232,64 +233,57 @@ static BITBOARD legal_bishop_moves(Board* board, PieceType type, int current_squ
     return legal_moves;
 }
 
-// coded like this just incase I need to debug the legal moves.
+// A queen is a bishop and a rook!
 static BITBOARD legal_queen_moves(Board* board, PieceType type, int current_square) {
-    uint64_t legal_moves = legal_bishop_moves(board, type, current_square) | legal_rook_moves(board, type, current_square);
-    // print_bitboard(legal_moves);
-    return legal_moves;
+    return legal_bishop_moves(board, type, current_square) | legal_rook_moves(board, type, current_square);
 }
 
-static void add_king_moves(BITBOARD* moves, int rank, int file);
-
-static BITBOARD legal_king_moves(Board* board, PieceType type, int current_square) {
+static BITBOARD legal_king_moves(Board* board, PieceType king_type, int current_square) {
     int rank = current_square / 8;
     int file = current_square % 8;
 
     BITBOARD legal_moves = 0ULL;
 
-    add_king_moves(&legal_moves, rank, file);
+    static const int king_offsets[8][2] = {{1, 0}, {-1, 0}, {-1, 1}, {-1, -1}, {1, -1}, {1, 1}, {0, -1}, {0, 1}};
 
-    remove_same_color_capture(board, &legal_moves, type);
+    for (int i = 0; i < 8; i++) {
+        int rank_delta = king_offsets[i][0];
+        int file_delta = king_offsets[i][1];
+        add_move(&legal_moves, rank + rank_delta, file + file_delta);
+    }
 
-    // need to make sure that the opponent is not attacking any of the legal moves
-    int start = type == B_KING ? W_PAWN : B_PAWN;
-    int end = type == B_KING ? W_KING : B_KING;
+    remove_same_color_capture(board, &legal_moves, king_type);
 
-    for (int i = 0; i < 64; i++) {
-        uint64_t square_mask = 1ULL << i;
-        for (int opp_type = start; opp_type <= end; opp_type++) {
+    // Filter out squares that would still be attacked after the king moves there.
+    int attacker_must_be_black = king_type == W_KING;
 
-            BITBOARD opponent_legal_moves = 0LL;
-            // if there exists an opponents piece then we need to check the legal moves
-            if (square_mask & board->bitboards[opp_type]) {
-                // if the opponent type is the king just check the adjacent squares for that other king
-                if (opp_type == end) {
-                    int opp_rank = i / 8, opp_file = i % 8;
-                    add_king_moves(&opponent_legal_moves, opp_rank, opp_file);
-                } else {
-                    // otherwise get the legal moves of the piece
-                    opponent_legal_moves = get_legal_moves(board, opp_type, i);
-                }
-                // if and moves in opponent_legal_moves exist in legal_moves then we remove it from legal_moves
-                if (opponent_legal_moves & legal_moves) {
-                    legal_moves &= ~opponent_legal_moves;
-                }
-            }
+    for (int square = 0; square < 64; square++) {
+        uint64_t square_mask = 1ULL << square;
+        if (!(square_mask & legal_moves)) {
+            continue;
+        }
+
+        // we are simulating a move to see if it is attacked.
+        // we have to remove the king's old position and remove the captured piece
+
+        Board test_board = *board;
+        uint64_t current_mask = 1ULL << current_square;
+        // removing the current square
+        test_board.bitboards[king_type] &= ~current_mask;
+
+        PieceType captured_piece = piece_at_square(board, square);
+        if (captured_piece != EMPTY) {
+            // removing the captured piece from the bitboard
+            test_board.bitboards[captured_piece] &= ~square_mask;
+        }
+
+        // if it is attacked after the king potentially moves there then we don't want to allow it as a legal move3
+        if (is_square_attacked(&test_board, square, attacker_must_be_black)) {
+            legal_moves &= ~square_mask;
         }
     }
 
     return legal_moves;
-}
-
-static void add_king_moves(BITBOARD* moves, int rank, int file) {
-    add_move(moves, rank + 1, file);
-    add_move(moves, rank - 1, file);
-    add_move(moves, rank - 1, file + 1);
-    add_move(moves, rank - 1, file - 1);
-    add_move(moves, rank + 1, file - 1);
-    add_move(moves, rank + 1, file + 1);
-    add_move(moves, rank, file + 1);
-    add_move(moves, rank, file - 1);
 }
 
 static void add_move(BITBOARD* legal_moves, int rank, int file) {
@@ -297,10 +291,8 @@ static void add_move(BITBOARD* legal_moves, int rank, int file) {
 }
 
 static void remove_same_color_capture(Board* board, BITBOARD* legal_moves, PieceType type) {
-    int is_black =
-        type == B_PAWN || type == B_BISHOP || type == B_KNIGHT || type == B_ROOK || type == B_QUEEN || type == B_KING;
-
-    if (is_black) {
+    int is_black_piece = type >= B_PAWN && type <= B_KING;
+    if (is_black_piece) {
         for (int i = B_PAWN; i <= B_KING; i++) {
             if (*legal_moves & board->bitboards[i]) {
                 *legal_moves &= ~board->bitboards[i];
@@ -313,6 +305,97 @@ static void remove_same_color_capture(Board* board, BITBOARD* legal_moves, Piece
             }
         }
     }
+}
+
+static PieceType piece_at_square(const Board* board, int square) {
+    uint64_t mask = 1ULL << square;
+    for (int i = 0; i < PIECE_COUNT; i++) {
+        if (mask & board->bitboards[i]) {
+            return (PieceType)i;
+        }
+    }
+    return EMPTY;
+}
+
+static int in_bounds(int rank, int file) { return rank >= 0 && rank < 8 && file >= 0 && file < 8; }
+
+static int is_square_attacked(const Board* board, int square, int attacker_must_be_black) {
+    int rank = square / 8;
+    int file = square % 8;
+
+    // check for pawn attacks
+    if (attacker_must_be_black) {
+        if (in_bounds(rank - 1, file - 1) && piece_at_square(board, ((rank - 1) * 8) + (file - 1)) == B_PAWN) return 1;
+        if (in_bounds(rank - 1, file + 1) && piece_at_square(board, ((rank - 1) * 8) + (file + 1)) == B_PAWN) return 1;
+    } else {
+        if (in_bounds(rank + 1, file - 1) && piece_at_square(board, ((rank + 1) * 8) + (file - 1)) == W_PAWN) return 1;
+        if (in_bounds(rank + 1, file + 1) && piece_at_square(board, ((rank + 1) * 8) + (file + 1)) == W_PAWN) return 1;
+    }
+
+    static const int knight_offsets[8][2] = {{-2, -1}, {-2, 1}, {-1, -2}, {-1, 2}, {1, -2}, {1, 2}, {2, -1}, {2, 1}};
+    // check for knight attacks
+    for (int i = 0; i < 8; i++) {
+        int attack_rank = rank + knight_offsets[i][0];
+        int attack_file = file + knight_offsets[i][1];
+        if (!in_bounds(attack_rank, attack_file)) continue;
+
+        PieceType attacker = piece_at_square(board, (attack_rank * 8) + attack_file);
+        if (attacker == EMPTY) continue;
+
+        if (attacker_must_be_black && attacker == B_KNIGHT) return 1;
+        if (!attacker_must_be_black && attacker == W_KNIGHT) return 1;
+    }
+
+    static const int king_offsets[8][2] = {{1, 0}, {-1, 0}, {-1, 1}, {-1, -1}, {1, -1}, {1, 1}, {0, -1}, {0, 1}};
+
+    for (int i = 0; i < 8; i++) {
+        int attack_rank = rank + king_offsets[i][0];
+        int attack_file = file + king_offsets[i][1];
+        if (!in_bounds(attack_rank, attack_file)) continue;
+
+        PieceType attacker = piece_at_square(board, (attack_rank * 8) + attack_file);
+        if (attacker == EMPTY) continue;
+
+        if (attacker_must_be_black && attacker == B_KING) return 1;
+        if (!attacker_must_be_black && attacker == W_KING) return 1;
+    }
+
+    static const int rook_directions[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+    static const int bishop_directions[4][2] = {{-1, -1}, {-1, 1}, {1, -1}, {1, 1}};
+
+    for (int direction = 0; direction < 4; direction++) {
+        for (int step = 1;; step++) {
+            int attack_rank = rank + rook_directions[direction][0] * step;
+            int attack_file = file + rook_directions[direction][1] * step;
+            if (!in_bounds(attack_rank, attack_file)) break;
+
+            PieceType attacker = piece_at_square(board, (attack_rank * 8) + attack_file);
+            if (attacker == EMPTY) continue;
+
+            if (attacker_must_be_black && (attacker == B_ROOK || attacker == B_QUEEN)) return 1;
+            if (!attacker_must_be_black && (attacker == W_ROOK || attacker == W_QUEEN)) return 1;
+
+            break;
+        }
+    }
+
+    for (int direction = 0; direction < 4; direction++) {
+        for (int step = 1;; step++) {
+            int attack_rank = rank + bishop_directions[direction][0] * step;
+            int attack_file = file + bishop_directions[direction][1] * step;
+            if (!in_bounds(attack_rank, attack_file)) break;
+
+            PieceType attacker = piece_at_square(board, (attack_rank * 8) + attack_file);
+            if (attacker == EMPTY) continue;
+
+            if (attacker_must_be_black && (attacker == B_BISHOP || attacker == B_QUEEN)) return 1;
+            if (!attacker_must_be_black && (attacker == W_BISHOP || attacker == W_QUEEN)) return 1;
+
+            break;
+        }
+    }
+
+    return 0;
 }
 
 int is_piece_at(const Board* board, int rank, int file) {
