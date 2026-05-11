@@ -9,6 +9,11 @@ static void update_castling_rules(Board* board, PieceType type, int current_squa
                                   PieceType captured_piece);
 static PieceType piece_at_square(const Board* board, int square);
 static void move_castling_rook(Board* board, PieceType king_type, int current_square, int new_square);
+static int is_square_attacked(const Board* board, int square, int attacker_must_be_black);
+
+// Returns 1 if the move (type from current_square to new_square) would leave
+// the mover's king in check on the resulting board, 0 otherwise.
+int move_results_in_check(Board* board, PieceType type, int current_square, int new_square);
 
 Board init_board() {
     // black at the top and white at the bottom
@@ -79,33 +84,98 @@ static BITBOARD legal_king_moves(Board* board, PieceType type, int current_squar
 static void add_move(BITBOARD* legal_moves, int rank, int file);
 static void remove_same_color_capture(Board* board, BITBOARD* legal_moves, PieceType type);
 static int in_bounds(int rank, int file);
-static int is_square_attacked(const Board* board, int square, int attacker_must_be_black);
 static int can_castle(Board* board, PieceType king_type, int current_square, int is_kingside);
 
 // Should return a BITBOARD of all legal moves by that piece type
 BITBOARD get_legal_moves(Board* board, PieceType type, int current_square) {
+    BITBOARD raw = 0ULL;
     switch (type) {
         case B_PAWN:
         case W_PAWN:
-            return legal_pawn_moves(board, type, current_square);
+            raw = legal_pawn_moves(board, type, current_square);
+            break;
         case B_KNIGHT:
         case W_KNIGHT:
-            return legal_knight_moves(board, type, current_square);
+            raw = legal_knight_moves(board, type, current_square);
+            break;
         case B_ROOK:
         case W_ROOK:
-            return legal_rook_moves(board, type, current_square);
+            raw = legal_rook_moves(board, type, current_square);
+            break;
         case B_BISHOP:
         case W_BISHOP:
-            return legal_bishop_moves(board, type, current_square);
+            raw = legal_bishop_moves(board, type, current_square);
+            break;
         case B_QUEEN:
         case W_QUEEN:
-            return legal_queen_moves(board, type, current_square);
+            raw = legal_queen_moves(board, type, current_square);
+            break;
         case B_KING:
         case W_KING:
-            return legal_king_moves(board, type, current_square);
+            raw = legal_king_moves(board, type, current_square);
+            break;
         default:
             return 0ULL;
     }
+
+    // Filter out the legal moves that result in check
+    BITBOARD filtered = 0ULL;
+    for (int s = 0; s < 64; s++) {
+        uint64_t m = 1ULL << s;
+        if (!(raw & m)) continue;
+        if (!move_results_in_check(board, type, current_square, s)) {
+            filtered |= m;
+        }
+    }
+
+    return filtered;
+}
+
+int move_results_in_check(Board* board, PieceType type, int current_square, int new_square) {
+    Board test = *board;
+    uint64_t from_mask = 1ULL << current_square;
+    uint64_t to_mask = 1ULL << new_square;
+
+    // remove captured piece if any
+    for (int i = 0; i < PIECE_COUNT; i++) {
+        if (to_mask & test.bitboards[i]) {
+            test.bitboards[i] &= ~to_mask;
+            break;
+        }
+    }
+
+    // move moving piece
+    for (int i = 0; i < PIECE_COUNT; i++) {
+        if (from_mask & test.bitboards[i]) {
+            test.bitboards[i] &= ~from_mask;
+            test.bitboards[i] |= to_mask;
+            break;
+        }
+    }
+
+    // If the piece is a king, find it at the destination; otherwise find its king
+    // Determine the mover's king by the color of the moving piece.
+    PieceType king;
+    if (type >= B_PAWN && type <= B_KING) {
+        king = B_KING;
+    } else {
+        king = W_KING;
+    }
+
+    int king_square = -1;
+    if (type == B_KING || type == W_KING) {
+        king_square = new_square;
+    } else {
+        // find king square
+        for (int sq = 0; sq < 64; sq++) {
+            if (1ULL << sq & test.bitboards[king]) { king_square = sq; break; }
+        }
+    }
+
+    if (king_square < 0) return 1; // should not happen, treat as in-check
+
+    int attacker_is_black = (king == W_KING);
+    return is_square_attacked(&test, king_square, attacker_is_black);
 }
 
 static BITBOARD legal_pawn_moves(Board* board, PieceType type, int current_square) {
@@ -475,7 +545,7 @@ static void move_castling_rook(Board* board, PieceType king_type, int current_sq
 
 int is_piece_at(const Board* board, int rank, int file) {
     uint64_t mask = 1ULL << ((rank * 8) + file);
-    for (int i = 0; i < PIECE_COUNT - 1; i++) {
+    for (int i = 0; i < PIECE_COUNT; i++) {
         if (mask & board->bitboards[i]) {
             return 1;
         }
@@ -526,7 +596,7 @@ static void update_castling_rules(Board* board, PieceType type, int current_squa
 // https://stackoverflow.com/questions/26252928/display-msb-to-lsb#26253009
 // I use this with layout 0 on https://gekomad.github.io/Cinnamon/BitboardCalculator/
 // for debugging
-static void print_bitboard(uint64_t n) {
+__attribute__((unused)) static void print_bitboard(uint64_t n) {
     for (int i = 63; i >= 0; i--) {
         printf("%llu", (n >> i) & 1ULL);
     }
