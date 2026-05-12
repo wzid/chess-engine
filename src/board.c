@@ -9,15 +9,20 @@ static void update_castling_rules(Board* board, PieceType type, int current_squa
                                   PieceType captured_piece);
 static PieceType piece_at_square(const Board* board, int square);
 static void move_castling_rook(Board* board, PieceType king_type, int current_square, int new_square);
-static int is_square_attacked(const Board* board, int square, int attacker_must_be_black);
-
-// Returns 1 if the move (type from current_square to new_square) would leave
-// the mover's king in check on the resulting board, 0 otherwise.
-int move_results_in_check(Board* board, PieceType type, int current_square, int new_square);
+static inline int get_square(int rank, int file);
+static int is_en_passant_capture_move(const Board* board, PieceType type, int new_square);
 
 Board init_board() {
     // black at the top and white at the bottom
-    Board chess_board = {.b_castle_kingside = 1, .b_castle_queenside = 1, .w_castle_kingside = 1, .w_castle_queenside = 1, .halfmove_clock = 0};
+    Board chess_board = {.b_castle_kingside = 1,
+                         .b_castle_queenside = 1,
+                         .w_castle_kingside = 1,
+                         .w_castle_queenside = 1,
+                         .halfmove_clock = 0,
+                         .en_passant_square = -1,
+                         .promotion_pending = 0,
+                         .promotion_square = -1,
+                         .promotion_pawn_type = EMPTY};
     chess_board.bitboards[B_PAWN] = 0xff00;
     chess_board.bitboards[B_ROOK] = 0x81;
     chess_board.bitboards[B_KNIGHT] = 0x42;
@@ -35,22 +40,36 @@ Board init_board() {
 }
 
 int move_piece(Board* board, PieceType type, int current_square, int new_square) {
-    // check if legal
-    // printf("Moving Piece\n");
+    // A pending promotion must be resolved before any new move.
+    if (board->promotion_pending) {
+        return 0;
+    }
 
     BITBOARD legal_moves = get_legal_moves(board, type, current_square);
     uint64_t n_mask = 1ULL << new_square;
 
     // not a legal move!!
     if (!(n_mask & legal_moves)) {
-        // do something
+        // don't allow
         return 0;
     }
 
     // detect and remove captured piece (if any)
     PieceType captured_piece = piece_at_square(board, new_square);
+
+    int is_en_passant_capture = 0;
+    int en_passant_capture_square = -1;
+
+    if (is_en_passant_capture_move(board, type, new_square)) {
+        is_en_passant_capture = 1;
+        // have to set this so we can capture the pawn without stepping on its square
+        en_passant_capture_square = (type == B_PAWN) ? (new_square - 8) : (new_square + 8);
+        captured_piece = piece_at_square(board, en_passant_capture_square);
+    }
+
     if (captured_piece != EMPTY) {
-        board->bitboards[captured_piece] &= ~n_mask;
+        uint64_t capture_mask = is_en_passant_capture ? (1ULL << en_passant_capture_square) : n_mask;
+        board->bitboards[captured_piece] &= ~capture_mask;
     }
 
     uint64_t o_mask = 1ULL << current_square;
@@ -64,11 +83,32 @@ int move_piece(Board* board, PieceType type, int current_square, int new_square)
         }
     }
 
+    // mark pending pawn promotion after the pawn arrives on last rank
+    if (type == B_PAWN || type == W_PAWN) {
+        int new_rank = new_square / 8;
+        int is_promotion = (type == B_PAWN && new_rank == 7) || (type == W_PAWN && new_rank == 0);
+        if (is_promotion) {
+            board->promotion_pending = 1;
+            board->promotion_square = new_square;
+            board->promotion_pawn_type = type;
+        }
+    }
+
     if (type == B_KING || type == W_KING) {
         move_castling_rook(board, type, current_square, new_square);
     }
 
     update_castling_rules(board, type, current_square, new_square, captured_piece);
+
+    // En passant is only available immediately after a double pawn push.
+    board->en_passant_square = -1;
+    // if there was a double push
+    if (type == B_PAWN && new_square - current_square == 16) {
+        // set it to the square above it
+        board->en_passant_square = current_square + 8;
+    } else if (type == W_PAWN && current_square - new_square == 16) {
+        board->en_passant_square = current_square - 8;
+    }
 
     // Update halfmove clock: reset on pawn move or any capture, otherwise increment
     int is_pawn = (type == B_PAWN || type == W_PAWN);
@@ -81,16 +121,54 @@ int move_piece(Board* board, PieceType type, int current_square, int new_square)
     return 1;
 }
 
+int promote_pawn(Board* board, PieceType promotion_type) {
+    if (!board->promotion_pending) {
+        return 0;
+    }
+
+    int square = board->promotion_square;
+    PieceType pawn_type = board->promotion_pawn_type;
+    int is_black = (pawn_type == B_PAWN);
+
+    int valid_choice = (is_black && (promotion_type == B_QUEEN || promotion_type == B_ROOK || promotion_type == B_BISHOP ||
+                                     promotion_type == B_KNIGHT)) ||
+                       (!is_black && (promotion_type == W_QUEEN || promotion_type == W_ROOK || promotion_type == W_BISHOP ||
+                                      promotion_type == W_KNIGHT));
+    if (!valid_choice) {
+        return 0;
+    }
+
+    uint64_t mask = 1ULL << square;
+    if (!(board->bitboards[pawn_type] & mask)) {
+        return 0;
+    }
+
+    board->bitboards[pawn_type] &= ~mask;
+    board->bitboards[promotion_type] |= mask;
+
+    board->promotion_pending = 0;
+    board->promotion_square = -1;
+    board->promotion_pawn_type = EMPTY;
+
+    return 1;
+}
+
 static BITBOARD legal_pawn_moves(Board* board, PieceType type, int current_square);
 static BITBOARD legal_knight_moves(Board* board, PieceType type, int current_square);
 static BITBOARD legal_rook_moves(Board* board, PieceType type, int current_square);
 static BITBOARD legal_bishop_moves(Board* board, PieceType type, int current_square);
 static BITBOARD legal_queen_moves(Board* board, PieceType type, int current_square);
 static BITBOARD legal_king_moves(Board* board, PieceType type, int current_square);
+
 static void add_move(BITBOARD* legal_moves, int rank, int file);
 static void remove_same_color_capture(Board* board, BITBOARD* legal_moves, PieceType type);
 static int in_bounds(int rank, int file);
 static int can_castle(Board* board, PieceType king_type, int current_square, int is_kingside);
+static int is_square_attacked(const Board* board, int square, int attacker_must_be_black);
+
+// Returns 1 if the move (type from current_square to new_square) would leave
+// the mover's king in check on the resulting board, 0 otherwise.
+static int move_results_in_check(Board* board, PieceType type, int current_square, int new_square);
 
 // Should return a BITBOARD of all legal moves by that piece type
 BITBOARD get_legal_moves(Board* board, PieceType type, int current_square) {
@@ -145,10 +223,27 @@ int move_results_in_check(Board* board, PieceType type, int current_square, int 
     uint64_t to_mask = 1ULL << new_square;
 
     // remove captured piece if any
-    for (int i = 0; i < PIECE_COUNT; i++) {
-        if (to_mask & test.bitboards[i]) {
-            test.bitboards[i] &= ~to_mask;
-            break;
+    int is_en_passant_capture = 0;
+    int en_passant_capture_square = -1;
+    if (is_en_passant_capture_move(&test, type, new_square)) {
+        is_en_passant_capture = 1;
+        en_passant_capture_square = (type == B_PAWN) ? (new_square - 8) : (new_square + 8);
+    }
+
+    if (is_en_passant_capture) {
+        uint64_t capture_mask = 1ULL << en_passant_capture_square;
+        for (int i = 0; i < PIECE_COUNT; i++) {
+            if (capture_mask & test.bitboards[i]) {
+                test.bitboards[i] &= ~capture_mask;
+                break;
+            }
+        }
+    } else {
+        for (int i = 0; i < PIECE_COUNT; i++) {
+            if (to_mask & test.bitboards[i]) {
+                test.bitboards[i] &= ~to_mask;
+                break;
+            }
         }
     }
 
@@ -180,7 +275,7 @@ int move_results_in_check(Board* board, PieceType type, int current_square, int 
         }
     }
 
-    if (king_square < 0) return 1; // should not happen, treat as in-check
+    if (king_square < 0) return 1;  // should not happen, treat as in-check
 
     int attacker_is_black = (king == W_KING);
     return is_square_attacked(&test, king_square, attacker_is_black);
@@ -193,8 +288,6 @@ static BITBOARD legal_pawn_moves(Board* board, PieceType type, int current_squar
     int is_black = type == B_PAWN;
     int rank = current_square / 8;
     int file = current_square % 8;
-
-    // printf("Current rank: %i, file: %i\n", rank, file);
 
     BITBOARD legal_moves = 0ULL;
     if (is_black) {
@@ -212,6 +305,13 @@ static BITBOARD legal_pawn_moves(Board* board, PieceType type, int current_squar
             add_move(&legal_moves, rank + 1, file - 1);
         }
 
+        if (is_en_passant_capture_move(board, type, get_square(rank + 1, file + 1))) {
+            add_move(&legal_moves, rank + 1, file + 1);
+        }
+        if (is_en_passant_capture_move(board, type, get_square(rank + 1, file - 1))) {
+            add_move(&legal_moves, rank + 1, file - 1);
+        }
+
     } else {
         if (!is_piece_at(board, rank - 1, file)) {
             add_move(&legal_moves, rank - 1, file);
@@ -225,6 +325,13 @@ static BITBOARD legal_pawn_moves(Board* board, PieceType type, int current_squar
             add_move(&legal_moves, rank - 1, file + 1);
         }
         if (is_piece_at(board, rank - 1, file - 1)) {
+            add_move(&legal_moves, rank - 1, file - 1);
+        }
+
+        if (is_en_passant_capture_move(board, type, get_square(rank - 1, file + 1))) {
+            add_move(&legal_moves, rank - 1, file + 1);
+        }
+        if (is_en_passant_capture_move(board, type, get_square(rank - 1, file - 1))) {
             add_move(&legal_moves, rank - 1, file - 1);
         }
     }
@@ -385,7 +492,7 @@ static BITBOARD legal_king_moves(Board* board, PieceType king_type, int current_
 }
 
 static void add_move(BITBOARD* legal_moves, int rank, int file) {
-    if (rank <= 7 && rank >= 0 && file <= 7 && file >= 0) *legal_moves |= (1ULL << ((rank * 8) + file));
+    if (rank <= 7 && rank >= 0 && file <= 7 && file >= 0) *legal_moves |= (1ULL << get_square(rank, file));
 }
 
 static void remove_same_color_capture(Board* board, BITBOARD* legal_moves, PieceType type) {
@@ -417,6 +524,19 @@ static PieceType piece_at_square(const Board* board, int square) {
 
 static int in_bounds(int rank, int file) { return rank >= 0 && rank < 8 && file >= 0 && file < 8; }
 
+// we can be pretty loose with the checks because if the en_passant_square is checked then these checks should suffice
+static int is_en_passant_capture_move(const Board* board, PieceType type, int new_square) {
+    if (type != B_PAWN && type != W_PAWN) {
+        return 0;
+    }
+
+    if (new_square != board->en_passant_square || new_square < 0 || new_square >= 64) {
+        return 0;
+    }
+
+    return 1;
+}
+
 static int is_square_attacked(const Board* board, int square, int attacker_must_be_black) {
     int rank = square / 8;
     int file = square % 8;
@@ -437,7 +557,7 @@ static int is_square_attacked(const Board* board, int square, int attacker_must_
         int attack_file = file + knight_offsets[i][1];
         if (!in_bounds(attack_rank, attack_file)) continue;
 
-        PieceType attacker = piece_at_square(board, (attack_rank * 8) + attack_file);
+        PieceType attacker = piece_at_square(board, get_square(attack_rank, attack_file));
         if (attacker == EMPTY) continue;
 
         if (attacker_must_be_black && attacker == B_KNIGHT) return 1;
@@ -451,7 +571,7 @@ static int is_square_attacked(const Board* board, int square, int attacker_must_
         int attack_file = file + king_offsets[i][1];
         if (!in_bounds(attack_rank, attack_file)) continue;
 
-        PieceType attacker = piece_at_square(board, (attack_rank * 8) + attack_file);
+        PieceType attacker = piece_at_square(board, get_square(attack_rank, attack_file));
         if (attacker == EMPTY) continue;
 
         if (attacker_must_be_black && attacker == B_KING) return 1;
@@ -467,7 +587,7 @@ static int is_square_attacked(const Board* board, int square, int attacker_must_
             int attack_file = file + rook_directions[direction][1] * step;
             if (!in_bounds(attack_rank, attack_file)) break;
 
-            PieceType attacker = piece_at_square(board, (attack_rank * 8) + attack_file);
+            PieceType attacker = piece_at_square(board, get_square(attack_rank, attack_file));
             if (attacker == EMPTY) continue;
 
             if (attacker_must_be_black && (attacker == B_ROOK || attacker == B_QUEEN)) return 1;
@@ -555,7 +675,7 @@ static void move_castling_rook(Board* board, PieceType king_type, int current_sq
 }
 
 int is_piece_at(const Board* board, int rank, int file) {
-    uint64_t mask = 1ULL << ((rank * 8) + file);
+    uint64_t mask = 1ULL << get_square(rank, file);
     for (int i = 0; i < PIECE_COUNT; i++) {
         if (mask & board->bitboards[i]) {
             return 1;
@@ -638,7 +758,7 @@ int is_checkmate(Board* board, int black_to_move) {
     // find king square
     PieceType king_pt = black_to_move ? B_KING : W_KING;
     BITBOARD kbb = board->bitboards[king_pt];
-    if (!kbb) return 0; // no king? treat as not checkmate here
+    if (!kbb) return 0;  // no king? treat as not checkmate here
     int king_sq = __builtin_ctzll(kbb);
 
     int attacker_is_black = !black_to_move;
@@ -652,7 +772,7 @@ int is_stalemate(Board* board, int black_to_move) {
     // find king square
     PieceType king_pt = black_to_move ? B_KING : W_KING;
     BITBOARD kbb = board->bitboards[king_pt];
-    if (!kbb) return 0; // no king? treat as not stalemate
+    if (!kbb) return 0;  // no king? treat as not stalemate
     int king_sq = __builtin_ctzll(kbb);
 
     int attacker_is_black = !black_to_move;
@@ -660,6 +780,6 @@ int is_stalemate(Board* board, int black_to_move) {
     return 0;
 }
 
-int is_fifty_move_draw(Board* board) {
-    return board->halfmove_clock >= 100;
-}
+int is_fifty_move_draw(Board* board) { return board->halfmove_clock >= 100; }
+
+static int get_square(int rank, int file) { return (rank * 8) + file; }

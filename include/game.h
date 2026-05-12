@@ -20,6 +20,10 @@ typedef struct {
     int current_turn;  // 0 = white, 1 = black
     int game_over;     // 0 = no, 1 = yes
     int result;        // 0 = none, 1 = white wins, 2 = black wins, 3 = draw
+    int promotion_active;
+    int promotion_from_square;
+    int promotion_to_square;
+    PieceType promotion_pawn_type;
 } Game;
 
 Game init_game();

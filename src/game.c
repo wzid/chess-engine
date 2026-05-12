@@ -21,6 +21,8 @@ static void draw_ui(Game* game, Board* board);
 static void reset_game(Game* game, Board* board);
 static void evaluate_game_state(Game* game, Board* board);
 static const char* result_text(const Game* game);
+static int is_promotion_move(PieceType piece, int target_square);
+static void draw_promotion_chooser(Game* game, Board* board);
 
 Game init_game() {
     Game game = {.light_color = (Color){235, 235, 200, 255},
@@ -29,7 +31,11 @@ Game init_game() {
                  .dragging = 0,
                  .current_turn = 0,
                  .game_over = 0,
-                 .result = 0};
+                 .result = 0,
+                 .promotion_active = 0,
+                 .promotion_from_square = -1,
+                 .promotion_to_square = -1,
+                 .promotion_pawn_type = EMPTY};
     return game;
 }
 
@@ -80,6 +86,8 @@ static void draw_board(Game* game, Board* board) {
     if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
         handle_mouse_release(game, board);
     }
+
+    draw_promotion_chooser(game, board);
 
     if (game->game_over) {
         DrawRectangle(0, 0, BOARD_SIZE, BOARD_SIZE, (Color){80, 80, 80, 140});
@@ -183,7 +191,7 @@ static void select_piece(Board* board, Game* game, int square, PieceType piece, 
 }
 
 static void handle_mouse_press(Game* game, Board* board, int square, PieceType piece) {
-    if (game->game_over) {
+    if (game->game_over || game->promotion_active) {
         return;
     }
 
@@ -218,7 +226,7 @@ static void handle_mouse_press(Game* game, Board* board, int square, PieceType p
 }
 
 static void handle_mouse_release(Game* game, Board* board) {
-    if (game->game_over) {
+    if (game->game_over || game->promotion_active) {
         return;
     }
 
@@ -241,13 +249,29 @@ static int try_move_selected_piece(Game* game, Board* board, int target_square) 
         return 0;
     }
 
-    if (game->game_over) {
+    if (game->game_over || game->promotion_active) {
         return 0;
     }
 
     // if you didnt move it at all.
     if (target_square == game->selected_piece.square) {
         return 0;
+    }
+
+    if (is_promotion_move(game->selected_piece.type, target_square)) {
+        if (!move_piece(board, game->selected_piece.type, game->selected_piece.square, target_square)) {
+            return 0;
+        }
+
+        game->promotion_active = 1;
+        game->promotion_from_square = game->selected_piece.square;
+        game->promotion_to_square = target_square;
+        game->promotion_pawn_type = game->selected_piece.type;
+
+        game->selected_piece.active = 0;
+        game->selected_piece.legal_moves = 0ULL;
+        game->dragging = 0;
+        return 1;
     }
 
     if (!move_piece(board, game->selected_piece.type, game->selected_piece.square, target_square)) {
@@ -295,6 +319,10 @@ static void reset_game(Game* game, Board* board) {
     game->current_turn = 0;
     game->game_over = 0;
     game->result = 0;
+    game->promotion_active = 0;
+    game->promotion_from_square = -1;
+    game->promotion_to_square = -1;
+    game->promotion_pawn_type = EMPTY;
 }
 
 static void draw_ui(Game* game, Board* board) {
@@ -358,5 +386,71 @@ static const char* result_text(const Game* game) {
             return "Draw";
         default:
             return "";
+    }
+}
+
+static int is_promotion_move(PieceType piece, int target_square) {
+    if (piece != W_PAWN && piece != B_PAWN) {
+        return 0;
+    }
+    int target_rank = target_square / 8;
+    return (piece == W_PAWN && target_rank == 0) || (piece == B_PAWN && target_rank == 7);
+}
+
+static void draw_promotion_chooser(Game* game, Board* board) {
+    if (!game->promotion_active) {
+        return;
+    }
+
+    DrawRectangle(0, 0, BOARD_SIZE, BOARD_SIZE, (Color){20, 20, 20, 140});
+
+    PieceType options[4];
+    if (game->promotion_pawn_type == W_PAWN) {
+        options[0] = W_QUEEN;
+        options[1] = W_ROOK;
+        options[2] = W_BISHOP;
+        options[3] = W_KNIGHT;
+    } else {
+        options[0] = B_QUEEN;
+        options[1] = B_ROOK;
+        options[2] = B_BISHOP;
+        options[3] = B_KNIGHT;
+    }
+
+    int box_size = 88;
+    int gap = 14;
+    int total_w = (box_size * 4) + (gap * 3);
+    int start_x = (BOARD_SIZE - total_w) / 2;
+    int y = (BOARD_SIZE - box_size) / 2;
+
+    DrawText("Choose promotion", start_x, y - 34, 28, RAYWHITE);
+
+    int mx = GetMouseX();
+    int my = GetMouseY();
+    int click = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+
+    for (int i = 0; i < 4; i++) {
+        int x = start_x + i * (box_size + gap);
+        Rectangle r = (Rectangle){(float)x, (float)y, (float)box_size, (float)box_size};
+        int hover = CheckCollisionPointRec((Vector2){(float)mx, (float)my}, r);
+
+        DrawRectangleRec(r, hover ? (Color){230, 230, 230, 255} : (Color){200, 200, 200, 255});
+        DrawRectangleLinesEx(r, 2.0f, (Color){35, 35, 35, 255});
+        Texture2D tex = game->textures[options[i]];
+        draw_piece(tex, x + 4, y + 3);
+
+        if (click && hover) {
+            int ok = promote_pawn(board, options[i]);
+            game->promotion_active = 0;
+            game->promotion_from_square = -1;
+            game->promotion_to_square = -1;
+            game->promotion_pawn_type = EMPTY;
+
+            if (ok) {
+                game->current_turn = 1 - game->current_turn;
+                evaluate_game_state(game, board);
+            }
+            return;
+        }
     }
 }

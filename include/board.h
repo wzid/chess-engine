@@ -15,6 +15,10 @@ typedef struct {
     BITBOARD bitboards[PIECE_COUNT];
     int is_in_check;
     int halfmove_clock;
+    int en_passant_square;
+    int promotion_pending;
+    int promotion_square;
+    PieceType promotion_pawn_type;
     int b_castle_queenside;
     int b_castle_kingside;
     int w_castle_queenside;
@@ -25,10 +29,11 @@ Board init_board();
 
 int move_piece(Board *board, PieceType type, int current_square, int new_square);
 
-BITBOARD get_legal_moves(Board* board, PieceType type, int current_square);
+// Finalize a pending pawn promotion created by move_piece.
+// Returns 1 on success, 0 if there is no pending promotion or piece type is invalid.
+int promote_pawn(Board* board, PieceType promotion_type);
 
-// Returns 1 if the move would leave the mover's king in check on the resulting board
-int move_results_in_check(Board* board, PieceType type, int current_square, int new_square);
+BITBOARD get_legal_moves(Board* board, PieceType type, int current_square);
 
 int is_checkmate(Board* board, int black_to_move);
 int is_stalemate(Board* board, int black_to_move);

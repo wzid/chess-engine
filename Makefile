@@ -2,7 +2,7 @@ CC := cc
 RAYLIB_CFLAGS := $(shell pkg-config --cflags raylib 2>/dev/null)
 RAYLIB_LIBS := $(shell pkg-config --libs raylib 2>/dev/null)
 
-CFLAGS := -Wall -Wextra -Iinclude $(RAYLIB_CFLAGS)
+CFLAGS := -Wall -Werror -Wextra -Iinclude $(RAYLIB_CFLAGS)
 LDLIBS := $(RAYLIB_LIBS)
 TARGET := chess-engine
 
