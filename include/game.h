@@ -24,6 +24,8 @@ typedef struct {
     int promotion_from_square;
     int promotion_to_square;
     PieceType promotion_pawn_type;
+    int ai_move_pending;
+    int ai_move_delay_frames;
 } Game;
 
 Game init_game();

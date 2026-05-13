@@ -1,5 +1,7 @@
 #include "game.h"
 
+#include "engine.h"
+
 #include <stdio.h>
 
 #define BOARD_SIZE 640
@@ -24,6 +26,10 @@ static const char* result_text(const Game* game);
 static int is_promotion_move(PieceType piece, int target_square);
 static void draw_promotion_chooser(Game* game, Board* board);
 
+// Set to 1 for AI as black, 0 for AI as white.
+#define AI_PLAYS_BLACK 0
+#define AI_TURN (AI_PLAYS_BLACK ? 1 : 0)
+
 Game init_game() {
     Game game = {.light_color = (Color){235, 235, 200, 255},
                  .dark_color = (Color){115, 150, 80, 255},
@@ -35,7 +41,15 @@ Game init_game() {
                  .promotion_active = 0,
                  .promotion_from_square = -1,
                  .promotion_to_square = -1,
-                 .promotion_pawn_type = EMPTY};
+                 .promotion_pawn_type = EMPTY,
+                 .ai_move_pending = 0,
+                 .ai_move_delay_frames = 0};
+
+    if (AI_TURN == game.current_turn) {
+        game.ai_move_pending = 1;
+        game.ai_move_delay_frames = 1;
+    }
+
     return game;
 }
 
@@ -95,6 +109,8 @@ static void draw_board(Game* game, Board* board) {
 }
 
 void game_loop(Game* game, Board* board) {
+    Engine engine = init_engine();
+
     // Request 4x MSAA before creating the window for smoother rendering
     SetConfigFlags(FLAG_MSAA_4X_HINT);
     InitWindow(BOARD_SIZE + SIDE_PANEL_WIDTH, BOARD_SIZE, "Chess Engine");
@@ -103,6 +119,10 @@ void game_loop(Game* game, Board* board) {
     init_textures(game);
 
     while (!WindowShouldClose()) {
+        if (game->ai_move_delay_frames > 0) {
+            game->ai_move_delay_frames--;
+        }
+
         BeginDrawing();
         ClearBackground((Color){24, 26, 32, 255});
 
@@ -110,6 +130,15 @@ void game_loop(Game* game, Board* board) {
         draw_ui(game, board);
 
         EndDrawing();
+
+        if (game->ai_move_pending && game->ai_move_delay_frames == 0 && !game->game_over && !game->promotion_active &&
+            game->current_turn == AI_TURN) {
+            game->ai_move_pending = 0;
+            if (engine_move(&engine, board, AI_TURN)) {
+                game->current_turn = 1 - AI_TURN;
+            }
+            evaluate_game_state(game, board);
+        }
     }
 
     for (int i = 0; i < PIECE_COUNT; i++) {
@@ -191,7 +220,7 @@ static void select_piece(Board* board, Game* game, int square, PieceType piece, 
 }
 
 static void handle_mouse_press(Game* game, Board* board, int square, PieceType piece) {
-    if (game->game_over || game->promotion_active) {
+    if (game->game_over || game->promotion_active || game->ai_move_pending || game->current_turn == AI_TURN) {
         return;
     }
 
@@ -284,6 +313,10 @@ static int try_move_selected_piece(Game* game, Board* board, int target_square) 
     game->dragging = 0;
 
     game->current_turn = 1 - game->current_turn;
+    if (game->current_turn == AI_TURN) {
+        game->ai_move_pending = 1;
+        game->ai_move_delay_frames = 1;
+    }
 
     evaluate_game_state(game, board);
     return 1;
@@ -323,6 +356,13 @@ static void reset_game(Game* game, Board* board) {
     game->promotion_from_square = -1;
     game->promotion_to_square = -1;
     game->promotion_pawn_type = EMPTY;
+    game->ai_move_pending = 0;
+    game->ai_move_delay_frames = 0;
+
+    if (game->current_turn == AI_TURN) {
+        game->ai_move_pending = 1;
+        game->ai_move_delay_frames = 1;
+    }
 }
 
 static void draw_ui(Game* game, Board* board) {
@@ -448,6 +488,10 @@ static void draw_promotion_chooser(Game* game, Board* board) {
 
             if (ok) {
                 game->current_turn = 1 - game->current_turn;
+                if (game->current_turn == AI_TURN) {
+                    game->ai_move_pending = 1;
+                    game->ai_move_delay_frames = 1;
+                }
                 evaluate_game_state(game, board);
             }
             return;

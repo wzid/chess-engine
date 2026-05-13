@@ -7,7 +7,6 @@
 static void print_bitboard(uint64_t n);
 static void update_castling_rules(Board* board, PieceType type, int current_square, int new_square,
                                   PieceType captured_piece);
-static PieceType piece_at_square(const Board* board, int square);
 static void move_castling_rook(Board* board, PieceType king_type, int current_square, int new_square);
 static inline int get_square(int rank, int file);
 static int is_en_passant_capture_move(const Board* board, PieceType type, int new_square);
@@ -512,7 +511,7 @@ static void remove_same_color_capture(Board* board, BITBOARD* legal_moves, Piece
     }
 }
 
-static PieceType piece_at_square(const Board* board, int square) {
+PieceType piece_at_square(const Board* board, int square) {
     uint64_t mask = 1ULL << square;
     for (int i = 0; i < PIECE_COUNT; i++) {
         if (mask & board->bitboards[i]) {
@@ -619,6 +618,20 @@ static int is_square_attacked(const Board* board, int square, int attacker_must_
 static int can_castle(Board* board, PieceType king_type, int current_square, int is_kingside) {
     int rank = current_square / 8, file = current_square % 8;
     int attacker_must_be_black = king_type == W_KING;
+
+    if (king_type == B_KING) {
+        if ((is_kingside && !board->b_castle_kingside) || (!is_kingside && !board->b_castle_queenside)) {
+            return 0;
+        }
+    } else {
+        if ((is_kingside && !board->w_castle_kingside) || (!is_kingside && !board->w_castle_queenside)) {
+            return 0;
+        }
+    }
+
+    if (is_square_attacked(board, current_square, attacker_must_be_black)) {
+        return 0;
+    }
 
     if (is_kingside) {
         if (is_piece_at(board, rank, file + 1) || is_piece_at(board, rank, file + 2)) {
@@ -734,10 +747,9 @@ __attribute__((unused)) static void print_bitboard(uint64_t n) {
     printf("\n");
 }
 
-// Helper: return 1 if the side to move (black if is_black==1) has any legal move
-static int side_has_any_legal_move(Board* board, int is_black) {
-    int start = is_black ? B_PAWN : W_PAWN;
-    int end = is_black ? B_KING : W_KING;
+int has_legal_moves(Board* board, int black_to_move) {
+    int start = black_to_move ? B_PAWN : W_PAWN;
+    int end = black_to_move ? B_KING : W_KING;
 
     for (int pt = start; pt <= end; pt++) {
         BITBOARD bb = board->bitboards[pt];
@@ -753,7 +765,7 @@ static int side_has_any_legal_move(Board* board, int is_black) {
 }
 
 int is_checkmate(Board* board, int black_to_move) {
-    if (side_has_any_legal_move(board, black_to_move)) return 0;
+    if (has_legal_moves(board, black_to_move)) return 0;
 
     // find king square
     PieceType king_pt = black_to_move ? B_KING : W_KING;
@@ -767,7 +779,7 @@ int is_checkmate(Board* board, int black_to_move) {
 }
 
 int is_stalemate(Board* board, int black_to_move) {
-    if (side_has_any_legal_move(board, black_to_move)) return 0;
+    if (has_legal_moves(board, black_to_move)) return 0;
 
     // find king square
     PieceType king_pt = black_to_move ? B_KING : W_KING;

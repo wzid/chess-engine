@@ -37,10 +37,16 @@ BITBOARD get_legal_moves(Board* board, PieceType type, int current_square);
 
 int is_checkmate(Board* board, int black_to_move);
 int is_stalemate(Board* board, int black_to_move);
+
+// 1 if side to move (black_to_move: 1=black) has at least one legal move.
+int has_legal_moves(Board* board, int black_to_move);
 int is_fifty_move_draw(Board* board);
 
 int is_piece_at(const Board* board, int rank, int file);
 #define is_piece_at_sq(b, sq) is_piece_at(b, (sq) / 8, (sq) % 8)
+
+// Piece occupying square, or EMPTY.
+PieceType piece_at_square(const Board* board, int square);
 
 
 
