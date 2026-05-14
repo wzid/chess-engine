@@ -23,15 +23,15 @@ Board init_board() {
                          .promotion_square = -1,
                          .promotion_pawn_type = EMPTY};
     chess_board.bitboards[B_PAWN] = 0xff00;
-    chess_board.bitboards[B_ROOK] = 0x81;
     chess_board.bitboards[B_KNIGHT] = 0x42;
     chess_board.bitboards[B_BISHOP] = 0x24;
+    chess_board.bitboards[B_ROOK] = 0x81;
     chess_board.bitboards[B_QUEEN] = 0x8;
     chess_board.bitboards[B_KING] = 0x10;
     chess_board.bitboards[W_PAWN] = 0xff000000000000;
-    chess_board.bitboards[W_ROOK] = 0x8100000000000000;
     chess_board.bitboards[W_KNIGHT] = 0x4200000000000000;
     chess_board.bitboards[W_BISHOP] = 0x2400000000000000;
+    chess_board.bitboards[W_ROOK] = 0x8100000000000000;
     chess_board.bitboards[W_QUEEN] = 0x800000000000000;
     chess_board.bitboards[W_KING] = 0x1000000000000000;
 

@@ -66,10 +66,21 @@ static int pawn_table[64] = {
     0,  0,  0,  0,  0,  0,  0,  0,
     50, 50, 50, 50, 50, 50, 50, 50,
     10, 10, 20, 30, 30, 20, 10, 10,
-    5,  5, 10, 25, 25, 10,  5,  5,
+    5,  5, 10, 25, 30, 10,  5,  5,
     0,  0,  0, 20, 20,  0,  0,  0,
     5, -5,-10,  0,  0,-10, -5,  5,
     5, 10, 10,-20,-20, 10, 10,  5,
+    0,  0,  0,  0,  0,  0,  0,  0
+};
+
+static int pawn_eg_table[64] = {
+    0,  0,  0,  0,  0,  0,  0,  0,
+    75, 75, 75, 75, 75, 75, 75, 75,
+    10, 10, 20, 30, 30, 20, 10, 10,
+    5,  5, 10, 0, 0, 10,  5,  5,
+    0,  0,  0, 0, 0,  0,  0,  0,
+    10, 10, 10, 0, 0, 10, 10, 10,
+    10, 10, 10, 5, 5, 10, 10, 10,
     0,  0,  0,  0,  0,  0,  0,  0
 };
 
@@ -88,6 +99,17 @@ static int bishop_table[64] = {
     -20,-10,-10,-10,-10,-10,-10,-20,
     -10,  0,  0,  0,  0,  0,  0,-10,
     -10,  0,  5, 10, 10,  5,  0,-10,
+    -10,  5,  5, 10, 10,  5,  5,-10,
+    -10,  0, 10, 10, 10, 10,  0,-10,
+    -10, 10, 10, 10, 10, 10, 10,-10,
+    -10,  5,  0,  0,  0,  0,  5,-10,
+    -20,-10,-10,-10,-10,-10,-10,-20,
+};
+
+static int bishop_eg_table[64] = {
+    -20,-10,-10,-10,-10,-10,-10,-20,
+    -10, 10, 10, 10, 10, 10, 10,-10,
+    -10,  0, 10, 10, 10, 10,  0,-10,
     -10,  5,  5, 10, 10,  5,  5,-10,
     -10,  0, 10, 10, 10, 10,  0,-10,
     -10, 10, 10, 10, 10, 10, 10,-10,
@@ -117,7 +139,7 @@ static int queen_table[64] = {
     -20,-10,-10, -5, -5,-10,-10,-20
 };
 
-static int king_table_mg[64] = {
+static int king_table[64] = {
     -30,-40,-40,-50,-50,-40,-40,-30,
     -30,-40,-40,-50,-50,-40,-40,-30,
     -30,-40,-40,-50,-50,-40,-40,-30,
@@ -127,9 +149,22 @@ static int king_table_mg[64] = {
     20, 20,  0,  0,  0,  0, 20, 20,
     20, 30, 10,  0,  0, 10, 30, 20
 };
+
+static int king_eg_table[64] = {
+    -50,-40,-30,-20,-20,-30,-40,-50,
+    -30,-20,-10,  0,  0,-10,-20,-30,
+    -30,-10, 20, 30, 30, 20,-10,-30,
+    -30,-10, 30, 40, 40, 30,-10,-30,
+    -30,-10, 30, 40, 40, 30,-10,-30,
+    -30,-10, 20, 30, 30, 20,-10,-30,
+    -30,-30,  0,  0,  0,  0,-30,-30,
+    -50,-30,-30,-30,-30,-30,-30,-50
+};
+
 // clang-format on
 
-static int* white_sq_weights[6] = { pawn_table, knight_table, bishop_table, rook_table, queen_table, king_table_mg };
+static int* mid_game_tables[6] = { pawn_table, knight_table, bishop_table, rook_table, queen_table, king_table };
+static int* end_game_tables[6] = { pawn_eg_table, knight_table, bishop_eg_table, rook_table, queen_table, king_eg_table };
 
 Engine init_engine() { return (Engine){.depth = 6}; }
 
@@ -330,34 +365,108 @@ int engine_move(Engine* engine, Board* board, int is_black) {
     return 1;
 }
 
+int done = 0;
+
+#include <stdio.h>
+
+static void print_bitboard(uint64_t n) {
+    for (int i = 63; i >= 0; i--) {
+        printf("%llu", (n >> i) & 1ULL);
+    }
+    printf("\n");
+}
+
+char *piece_to_char(PieceType piece) {
+    switch (piece) {
+        case B_PAWN:
+            return "p";
+        case B_KNIGHT:
+            return "n";
+        case B_BISHOP:
+            return "b";
+        case B_ROOK:
+            return "r";
+        case B_QUEEN:
+            return "q";
+        case B_KING:
+            return "k";
+        case W_PAWN:
+            return "P";
+        case W_KNIGHT:
+            return "N";
+        case W_BISHOP:
+            return "B";
+        case W_ROOK:
+            return "R";
+        case W_QUEEN:
+            return "Q";
+        case W_KING:
+            return "K";
+        default:
+            return ".";
+    }
+}
+
+
+
+
 int eval_board(Board* board, int is_black) {
     int multiplier = is_black ? -1 : 1;
 
     int black_piece_value = 0;
-    int black_sq_values = 0;
+    int black_sq_values_mg = 0;
+    int black_sq_values_eg = 0;
+
     for (int i = B_PAWN; i <= B_KING; i++) {
         BITBOARD b = board->bitboards[i];
         while (b) {
             int s = __builtin_ctzll(b);
             black_piece_value += piece_score(i);
-            black_sq_values += white_sq_weights[i][63 - s];
+            black_sq_values_mg += mid_game_tables[i][s ^ 56]; /* black's perspective: flip rank (xor 56) to use white's tables */
+            black_sq_values_eg += end_game_tables[i][s ^ 56];
             b &= b - 1;
         }
     }
 
     int white_piece_value = 0;
-    int white_sq_values = 0;
+    int white_sq_values_mg = 0;
+    int white_sq_values_eg = 0;
+
     for (int i = W_PAWN; i <= W_KING; i++) {
         BITBOARD b = board->bitboards[i];
         while (b) {
             int s = __builtin_ctzll(b);
             white_piece_value += piece_score(i);
-            white_sq_values += white_sq_weights[i - W_PAWN][s];
+            white_sq_values_mg += mid_game_tables[i - W_PAWN][s];
+            white_sq_values_eg += end_game_tables[i - W_PAWN][s];
             b &= b - 1;
         }
     }
 
-    return ((white_piece_value - black_piece_value) + (white_sq_values - black_sq_values)) * multiplier;
+    // https://www.chessprogramming.org/Tapered_Eval
+    // https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function
+
+    // Tapered eval: blend midgame and endgame based on piece count.
+    // Phase goes from 0 (endgame) to 24 (starting position).
+    int piece_val[4] = {0, 1, 1, 2, 4};
+    
+    int phase = 0;
+    for (int i = B_KNIGHT; i <= B_QUEEN; i++) {
+        int val = piece_val[i];
+        phase += __builtin_popcountll(board->bitboards[i]) * val;
+    }
+    for (int i = W_KNIGHT; i <= W_QUEEN; i++) {
+        int val = piece_val[i - W_PAWN];
+        phase += __builtin_popcountll(board->bitboards[i]) * val;
+    }
+    phase = (phase > 24) ? 24 : phase;
+    
+    int mg_eval = (white_piece_value - black_piece_value) + (white_sq_values_mg - black_sq_values_mg);
+    int eg_eval = (white_piece_value - black_piece_value) + (white_sq_values_eg - black_sq_values_eg);
+    
+    int tapered = (mg_eval * phase + eg_eval * (24 - phase)) / 24;
+    
+    return tapered * multiplier;
 }
 
 static int finalize_promotion_if_needed(Board* board, PieceType piece) {
