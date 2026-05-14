@@ -365,51 +365,6 @@ int engine_move(Engine* engine, Board* board, int is_black) {
     return 1;
 }
 
-int done = 0;
-
-#include <stdio.h>
-
-static void print_bitboard(uint64_t n) {
-    for (int i = 63; i >= 0; i--) {
-        printf("%llu", (n >> i) & 1ULL);
-    }
-    printf("\n");
-}
-
-char *piece_to_char(PieceType piece) {
-    switch (piece) {
-        case B_PAWN:
-            return "p";
-        case B_KNIGHT:
-            return "n";
-        case B_BISHOP:
-            return "b";
-        case B_ROOK:
-            return "r";
-        case B_QUEEN:
-            return "q";
-        case B_KING:
-            return "k";
-        case W_PAWN:
-            return "P";
-        case W_KNIGHT:
-            return "N";
-        case W_BISHOP:
-            return "B";
-        case W_ROOK:
-            return "R";
-        case W_QUEEN:
-            return "Q";
-        case W_KING:
-            return "K";
-        default:
-            return ".";
-    }
-}
-
-
-
-
 int eval_board(Board* board, int is_black) {
     int multiplier = is_black ? -1 : 1;
 
@@ -448,7 +403,7 @@ int eval_board(Board* board, int is_black) {
 
     // Tapered eval: blend midgame and endgame based on piece count.
     // Phase goes from 0 (endgame) to 24 (starting position).
-    int piece_val[4] = {0, 1, 1, 2, 4};
+    int piece_val[5] = {0, 1, 1, 2, 4};
     
     int phase = 0;
     for (int i = B_KNIGHT; i <= B_QUEEN; i++) {
